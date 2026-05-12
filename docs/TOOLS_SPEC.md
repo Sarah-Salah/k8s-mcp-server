@@ -29,10 +29,13 @@ Every tool has a paired pydantic input model named `<ToolName>Input`. Inputs are
 
 If a tool takes a `namespace` parameter:
 - `None` → use the kubeconfig context's default namespace
-- `"all"` → all namespaces (read tools only; write tools reject this)
+- `"all"` → every namespace **the server is allowed to see** (read tools only; write tools reject this)
 - Any other string → that specific namespace
 
-If the server was started with `--namespaces ns1,ns2`, only those namespaces are valid.
+If the server was started with `--namespaces ns1,ns2`:
+- Only those namespaces are valid for any tool. Other values return `success=False, error="namespace 'X' is not in the configured allowlist"`.
+- `"all"` resolves to the allowlist — it never bypasses it.
+- `list_namespaces` returns **only** the allowlisted namespaces, not every namespace in the cluster.
 
 ### Output shape rules
 
@@ -188,16 +191,35 @@ If the server was started with `--namespaces ns1,ns2`, only those namespaces are
 
 ### 11. `describe_resource`
 
-**Description:** Generic `kubectl describe`-style output for any standard K8s resource.
+**Description:** Structured "describe" view of any standard K8s resource — metadata, status, and recent events as a dict (not pre-formatted text). Friendlier for an LLM to reason over than `kubectl describe` output.
 
 **Input:**
 - `kind: str` — `"pod" | "deployment" | "service" | "node" | "configmap" | "secret" | "ingress"`
 - `name: str`
 - `namespace: str | None` — required for namespaced kinds
 
-**Output:** `{description: str}` — pre-formatted multi-section text.
+**Output:**
+```json
+{
+  "kind": "Pod",
+  "name": "...",
+  "namespace": "...",
+  "metadata": {
+    "labels": {...},
+    "annotations": {...},
+    "creation_timestamp": "...",
+    "age_seconds": 0,
+    "age_human": "..."
+  },
+  "spec_summary": { /* trimmed, kind-specific */ },
+  "status": { /* trimmed, kind-specific */ },
+  "events": [
+    {"type": "...", "reason": "...", "message": "...", "count": 1, "last_seen": "..."}
+  ]
+}
+```
 
-**Important:** When `kind="secret"`, return only metadata — never the data block.
+**Important:** When `kind="secret"`, `status` and `spec_summary` MUST omit `.data` and `.stringData`. Only `type`, `data_keys` (key names), and standard metadata are returned.
 
 ---
 

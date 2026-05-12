@@ -86,6 +86,7 @@ k8s-mcp-server/
 │       ├── tools/
 │       │   ├── __init__.py
 │       │   ├── _registry.py   # decorator: @register_tool
+│       │   ├── namespaces.py
 │       │   ├── pods.py
 │       │   ├── deployments.py
 │       │   ├── services.py

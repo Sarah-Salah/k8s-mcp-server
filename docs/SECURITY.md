@@ -23,7 +23,6 @@ The server applies five layers of protection. A write tool only executes if **ev
 ### Layer 1 — Server start flags
 
 - `--enable-writes` is required to enable write tools at all
-- `--read-only` short-circuits to always-read-only regardless of other flags
 - `--namespaces ns1,ns2` (optional) restricts every tool — read and write — to those namespaces
 
 ### Layer 2 — Tool registration
@@ -49,8 +48,8 @@ The server applies five layers of protection. A write tool only executes if **ev
 
 ## Sensitive Data Handling
 
-- **Secrets:** `list_secrets`-style operations and `describe_resource(kind="secret")` return only `name, namespace, type, age, data_keys` — never `.data` or `.stringData` values.
-- **ConfigMaps:** Return only `name, namespace, age, keys` by default. Full data only via an explicit `include_data=True` parameter, which the LLM must request consciously.
+- **Secrets:** v1 ships no dedicated list/get tool for Secrets. The only way an LLM can reach a Secret is `describe_resource(kind="secret")`, which returns only `name, namespace, type, age, data_keys` (key names) — never `.data` or `.stringData` values.
+- **ConfigMaps:** v1 ships no dedicated list/get tool for ConfigMaps. `describe_resource(kind="configmap")` returns only `name, namespace, age, keys` (key names) — values are not returned in v1. (A future tool may add an opt-in `include_data` parameter; out of v1 scope.)
 - **kubeconfig:** Never echoed in any tool response. Tools may return the current **context name** only.
 - **Log redaction:** The audit logger redacts patterns matching `(?i)(token|secret|password|api[_-]?key|bearer)\s*[=:]\s*\S+` before emitting.
 
