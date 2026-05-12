@@ -1,0 +1,124 @@
+# ============================================================
+# ============================================================
+_LOCAL_ONLY/
+notes/
+.scratch/
+
+# ============================================================
+# Claude Code / AI tooling
+# ============================================================
+.claude/
+.claude-cache/
+*.claude.local.md
+
+# ============================================================
+# Environment & secrets
+# ============================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+kubeconfig
+kubeconfig.*
+!examples/kubeconfig.example
+.secrets/
+
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# uv
+.venv/
+venv/
+env/
+.python-version
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# Linting
+.ruff_cache/
+
+# ============================================================
+# IDEs
+# ============================================================
+.vscode/
+!.vscode/settings.json.example
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ============================================================
+# Jupyter
+# ============================================================
+.ipynb_checkpoints
+*.ipynb
+
+# ============================================================
+# Logs & temp
+# ============================================================
+*.log
+logs/
+tmp/
+temp/
+
+# ============================================================
+# OS
+# ============================================================
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
+# ============================================================
+# Build artifacts
+# ============================================================
+*.tar.gz
+*.zip
