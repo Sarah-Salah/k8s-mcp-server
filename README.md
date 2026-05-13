@@ -2,7 +2,7 @@
 
 An MCP server that lets AI assistants — Claude Desktop, Cursor, Claude Code — safely inspect and operate on Kubernetes clusters through natural conversation.
 
-![CI](https://github.com/<sarah-salah>/k8s-mcp-server/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/sarah-salah/k8s-mcp-server/actions/workflows/ci.yml/badge.svg)
 ![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 ![MCP](https://img.shields.io/badge/MCP-compatible-purple.svg)
@@ -118,7 +118,7 @@ See [`CLAUDE.md`](CLAUDE.md) §6.1 for the Write Tool Contract.
 ## Development
 
 ```bash
-git clone https://github.com/<sarah-salah>/k8s-mcp-server
+git clone https://github.com/sarah-salah/k8s-mcp-server
 cd k8s-mcp-server
 uv sync
 uv run pytest
