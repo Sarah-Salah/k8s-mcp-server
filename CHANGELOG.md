@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `tools/nodes.py`: `list_nodes` tool. Inputs: `label_selector`, `limit`
+  (default 100, 1–1000). No `namespace` input — nodes are cluster-scoped
+  and the `--namespaces` allowlist does not apply (passing a `namespace`
+  field is a `ValidationError`). Output per node: `{name, status, roles,
+  age_seconds, age_human, kubelet_version, capacity, allocatable}`.
+- `list_nodes` status derivation: iterates `status.conditions` for the
+  `Ready` type. `status == "True"` → `"Ready"`,
+  `status == "False"` → `"NotReady"`, anything else (`"Unknown"`, missing,
+  or no `Ready` condition at all) → `"Unknown"`.
+- `list_nodes` role derivation: matches labels by the
+  `node-role.kubernetes.io/` prefix, takes the suffix, returns the sorted
+  list. Bare prefix labels with empty suffix are skipped defensively. No
+  role labels at all → `["worker"]` (matches `kubectl get nodes` display
+  behaviour for unlabelled worker pools in GKE/EKS).
+- `list_nodes` capacity/allocatable values are passed through as Quantity
+  strings (`"4"`, `"8Gi"`, `"110"`) — no normalization. LLMs are trained
+  on K8s resource strings and parsing them client-side would lose
+  human-readable context. `kubelet_version` from `status.node_info`.
+- Output sorted by `name`. Cluster-wide `limit` + truncation flag (same
+  pattern as other list tools, just no per-namespace dispatch).
+- 22 tests for `list_nodes` covering happy path / sort / age, label
+  selector forwarding (set + None), truncation (over + under), the full
+  status matrix (True / False / Unknown / no Ready condition / no
+  conditions), role derivation (single / multiple-sorted / no-labels
+  worker fallback / empty-suffix defensive), capacity & allocatable
+  pass-through, defensive missing metadata/status, API exceptions, and
+  input validation (incl. explicit rejection of `namespace` field as
+  proof of cluster-scoping).
+
 - `tools/services.py`: `list_services` tool. Inputs: `namespace`,
   `label_selector`, `limit` (default 100, 1–1000). Output per service:
   `{name, namespace, type, cluster_ip, external_ip, ports, age_seconds,
