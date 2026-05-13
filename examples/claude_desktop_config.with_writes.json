@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "kubernetes": {
+      "command": "k8s-mcp-server",
+      "args": [
+        "--kubeconfig", "/Users/yourname/.kube/config",
+        "--enable-writes",
+        "--namespaces", "dev,staging"
+      ]
+    }
+  }
+}

@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `examples/` directory with two ready-to-paste Claude Desktop config
+  snippets: `claude_desktop_config.read_only.json` (the safe default — 13
+  read tools, no way to change cluster state) and
+  `claude_desktop_config.with_writes.json` (read tools plus
+  `scale_deployment`/`restart_deployment`/`delete_pod`, scoped to
+  `dev,staging` via `--namespaces`). Both use the installed
+  `k8s-mcp-server` console script (the README's quick-start keeps `uvx`
+  for the no-install path).
+- `examples/README.md` documenting the Claude Desktop config-file
+  locations (macOS + Windows), how to merge the snippet with existing
+  `mcpServers` entries, the `/Users/yourname/.kube/config` placeholder,
+  and a security warning for the writes-enabled variant pointing to
+  `docs/SECURITY.md`. Also notes that the MCP server itself runs on
+  Linux for use with Claude Code or other non-GUI MCP clients.
+- `tests/test_examples.py`: 3 tests that JSON-parse both example
+  files, verify the `mcpServers.kubernetes` structure (command + args
+  types), and pin that the with-writes example includes BOTH
+  `--enable-writes` AND `--namespaces` (never just one — the safety
+  levers are paired). Catches a real user-facing bug class: a typo in
+  the example JSON makes Claude Desktop silently fail to load the
+  server.
+- `README.md`: one-sentence pointer to the new `examples/` directory
+  under "Configure Claude Desktop".
+
 - `tools/pods.py`: `delete_pod` write tool (registered with `is_write=True`)
   — the last tool in v1. Inputs: `name`, `namespace`, `force` (default
   `False`), `dry_run` (default `True`). Follows the Write Tool Contract

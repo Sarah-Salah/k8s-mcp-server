@@ -51,6 +51,8 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 }
 ```
 
+Ready-to-paste config files (read-only and writes-enabled variants) live in [`examples/`](examples/).
+
 Restart Claude Desktop. You should now be able to ask things like:
 
 > "List all pods in the staging namespace that aren't running."
