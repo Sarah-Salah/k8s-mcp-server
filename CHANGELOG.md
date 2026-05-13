@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `tools/events.py`: `list_events` tool. Inputs: `namespace`,
+  `involved_object_kind`, `involved_object_name`, `type` (validated as
+  `Literal["Normal", "Warning"]`), `since_seconds` (`ge=1`), `limit`
+  (default 50, 1–1000). `kind` + `name` + `type` are joined into the K8s
+  `field_selector` string (kind+name not UID, matching the policy used by
+  `get_pod`'s embedded events). `since_seconds` is filtered client-side
+  because the K8s events API does not accept a timestamp field selector.
+- `list_events` namespace dispatch: when an allowlist is set, iterates
+  `list_namespaced_event` per allowed namespace; without an allowlist,
+  `namespace="all"` calls `list_event_for_all_namespaces` once. `None` and
+  specific namespaces use `list_namespaced_event` once.
+- `list_events` output: `{events: [...], truncated: bool}`. Each event:
+  `{type, reason, message, count, first_seen_age_seconds,
+  last_seen_age_seconds, involved_object: {kind, name, namespace}}`. Sorted
+  most-recent first using the same timestamp precedence as `get_pod`'s
+  embedded events (`last_timestamp` → `event_time` → `metadata.creation_timestamp`
+  → epoch fallback). Per-namespace `limit` + aggregate truncation matches
+  `list_pods`.
+- 22 tests for `list_events` covering namespace dispatch (default / specific /
+  all-no-allowlist / all-with-allowlist / outside-allowlist / default-not-in-
+  allowlist), field selector construction (full / none / kind-only),
+  `since_seconds` filtering (including malformed events filtered out),
+  sorting, truncation, format shape, `event_time` fallback, no-timestamps
+  fallback, missing `involved_object`, API errors, and input validation
+  (extra field / invalid `type` literal / case-sensitive `type` /
+  out-of-range `since_seconds` and `limit`).
+
+### Known duplication
+
+- `_event_sort_key` is duplicated between `tools/pods.py` and `tools/events.py`.
+  The next commit (`refactor: extract _event_sort_key to utils/k8s_events.py`)
+  consolidates both call sites onto a shared helper. Duplication kept brief
+  and clearly commented in both modules so the feature commit and the
+  refactor commit each stay single-purpose.
+
 - `tools/logs.py`: `get_pod_logs` tool. Inputs: `name` (required), `namespace`,
   `container`, `tail_lines` (default 200, 1–10000), `since_seconds`,
   `previous` (default False), `max_bytes` (default 256 KiB, 1 KiB – 1 MiB).
