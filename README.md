@@ -132,7 +132,7 @@ uv run ruff check
 uv run mypy src/
 ```
 
-Project conventions and workflow in [CLAUDE.md](CLAUDE.md).
+Project conventions and workflow in [CLAUDE.md](CLAUDE.md). Integration tests against a real `kind` cluster are documented in [`docs/INTEGRATION_TESTING.md`](docs/INTEGRATION_TESTING.md).
 
 ## Roadmap
 

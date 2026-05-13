@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `tests/integration/test_kind_smoke.py`: single end-to-end smoke test
+  against a real Kubernetes cluster. Exercises `load_context` (real
+  kubeconfig parse + ApiClient) plus three tool calls (`list_namespaces`,
+  `list_pods`, `get_pod`) against `kube-system` — proves the whole stack
+  works end-to-end against a live API server. Skipped automatically
+  unless `KUBECONFIG` is set (dual-mechanism: `@pytest.mark.integration`
+  marker for explicit selection via `pytest -m integration`, plus
+  `pytest.mark.skipif` for safety so the test doesn't crash if the
+  marker is selected without setting up a cluster).
+- `[tool.pytest.ini_options].markers`: register the `integration` marker
+  so `--strict-markers` doesn't complain about it.
+- `docs/INTEGRATION_TESTING.md`: kind installation, cluster setup,
+  KUBECONFIG export, run/teardown commands, plus a Troubleshooting
+  section covering the three most common debugging scenarios
+  (skipped-despite-KUBECONFIG, ConnectionRefused after cluster death,
+  PermissionDenied indicating wrong context).
+- `.github/workflows/ci.yml`: new `integration-test` job that uses
+  `helm/kind-action@v1` to spin up a kind cluster and runs
+  `pytest -m integration`. Runs in **parallel** with the existing
+  `lint-test` job — a unit-test failure doesn't block the integration
+  check, and vice versa.
+- `README.md`: one-sentence pointer to `docs/INTEGRATION_TESTING.md` in
+  the existing Development section.
+
 - `examples/` directory with two ready-to-paste Claude Desktop config
   snippets: `claude_desktop_config.read_only.json` (the safe default — 13
   read tools, no way to change cluster state) and

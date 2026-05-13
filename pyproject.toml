@@ -81,3 +81,6 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-ra --strict-markers"
+markers = [
+    "integration: requires a real Kubernetes cluster (see docs/INTEGRATION_TESTING.md)",
+]
