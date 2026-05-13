@@ -50,3 +50,25 @@ def patch_core_v1(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], MagicMock]
         return api
 
     return _patch
+
+
+@pytest.fixture
+def patch_apps_v1(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], MagicMock]:
+    """Factory: patch ``AppsV1Api`` inside an arbitrary tool module.
+
+    Mirrors :func:`patch_core_v1` for tools that use the apps/v1 API
+    (deployments, future StatefulSets / DaemonSets in v2). Kept as a
+    parallel fixture rather than generalising the existing one to avoid
+    a refactor inside a feature commit.
+
+    Usage:
+        api = patch_apps_v1("k8s_mcp_server.tools.deployments")
+        api.list_namespaced_deployment.return_value = ...
+    """
+
+    def _patch(target_module: str) -> MagicMock:
+        api = MagicMock()
+        monkeypatch.setattr(f"{target_module}.AppsV1Api", lambda _client: api)
+        return api
+
+    return _patch

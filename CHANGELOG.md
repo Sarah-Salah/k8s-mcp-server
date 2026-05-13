@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `tools/deployments.py`: `list_deployments` tool. Inputs: `namespace`,
+  `label_selector`, `limit` (default 100, 1–1000). Output per deployment:
+  `{name, namespace, replicas_desired, replicas_ready, age_seconds,
+  age_human, image}`. `replicas_desired` passes through `None` from
+  `spec.replicas` (no translation of K8s's "None means 1" convention);
+  `replicas_ready` coerces `None` → `0` since it's a count, not a config
+  value. `image` is the first container's image
+  (`spec.template.spec.containers[0].image`) — full container list lands in
+  `get_deployment` (#6).
+- `list_deployments` namespace dispatch follows the same pattern as
+  `list_pods` / `list_events`: per-namespace `list_namespaced_deployment`
+  calls when an allowlist is set or a single namespace is requested,
+  `list_deployment_for_all_namespaces` once when `namespace="all"` and no
+  allowlist. Output sorted by `(namespace, name)`. Per-namespace `limit` +
+  aggregate truncation flag.
+- `patch_apps_v1` factory fixture in `tests/conftest.py`, parallel to
+  `patch_core_v1`. Used by `test_deployments.py` and any future apps/v1
+  tools (StatefulSets / DaemonSets in v2). Existing `patch_core_v1` and
+  every test that uses it stay untouched.
+- 19 tests for `list_deployments` covering namespace dispatch, label
+  selector forwarding, truncation, sort order, format shape, the
+  `replicas_desired=None` pass-through, the `replicas_ready=None`→0
+  coercion, multi-container image selection, no-containers image fallback,
+  defensive partial-deployment handling, API exceptions, and input
+  validation.
+
 ### Changed
 
 - Extracted shared `event_sort_key` helper to `utils/k8s_events.py`;
