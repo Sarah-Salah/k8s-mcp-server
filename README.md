@@ -128,7 +128,7 @@ uv run mypy src/
 
 Project conventions and workflow in [CLAUDE.md](CLAUDE.md). Integration tests against a real `kind` cluster are documented in [`docs/INTEGRATION_TESTING.md`](docs/INTEGRATION_TESTING.md).
 
-## Roadmap
+## Roadmap (v2)
 
 See [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md). Highlights for v2:
 
