@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `kube/safe.py`: `resolve_read_namespaces` resolver and `NamespaceNotAllowedError`
+  exception. Centralises the `--namespaces` allowlist semantics defined in
+  `docs/TOOLS_SPEC.md`: `None` → context default (rejected if not allowlisted,
+  with a hint to specify a namespace or update `--namespaces`); `"all"` →
+  sorted allowlist or full cluster; specific namespace → passes through unless
+  outside the allowlist.
+- `KubeContext.default_namespace`: read from the active context entry in
+  kubeconfig at `load_context` time, falls back to `"default"`.
+- `tools/pods.py`: `list_pods` tool with optional `namespace`, `label_selector`,
+  `field_selector`, and `limit` (default 100, capped at 1000). Honours the
+  allowlist via `resolve_read_namespaces`; iterates `list_namespaced_pod` per
+  namespace when an allowlist is set, otherwise falls back to
+  `list_pod_for_all_namespaces`. Output is sorted by `(namespace, name)` and
+  includes a `truncated` flag.
+- Pod formatter handles missing `metadata`/`spec`/`status` defensively
+  (`Unknown`/`None`) so tests with partial mock objects don't crash.
+- `patch_core_v1` factory fixture in `tests/conftest.py` for tool tests that
+  need to mock the Core V1 API in their tool module. Existing `mock_core_v1`
+  fixture remains in place.
+- Tests: namespace allowlist resolver (`test_kube/test_safe.py`) and
+  `list_pods` (specific / default / all-no-allowlist / all-with-allowlist /
+  outside-allowlist / default-not-in-allowlist / selectors / truncation /
+  sorting / format / no-containers / partial pod / API error / input
+  validation).
 - Project skeleton: `pyproject.toml` with pinned runtime deps (`mcp`, `kubernetes`,
   `pydantic`) and dev deps (`pytest`, `pytest-asyncio`, `pytest-cov`, `ruff`,
   `mypy`); hatchling build backend; console script entry point.

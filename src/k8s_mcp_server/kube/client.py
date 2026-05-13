@@ -25,6 +25,7 @@ class KubeContext:
 
     api_client: client.ApiClient
     context_name: str
+    default_namespace: str = "default"
 
 
 def load_context(settings: Settings) -> KubeContext:
@@ -47,14 +48,39 @@ def load_context(settings: Settings) -> KubeContext:
     except FileNotFoundError as exc:
         raise KubeConfigError(f"kubeconfig file not found: {exc.filename}") from exc
 
-    if settings.context:
-        context_name = settings.context
-    else:
-        try:
-            _, active = config.list_kube_config_contexts(config_file=kubeconfig_path)
-            context_name = active["name"] if active else "unknown"
-        except ConfigException:
-            context_name = "unknown"
+    context_name, default_namespace = _resolve_context_metadata(kubeconfig_path, settings.context)
 
-    logger.info("kubeconfig loaded (context=%s)", context_name)
-    return KubeContext(api_client=client.ApiClient(), context_name=context_name)
+    logger.info(
+        "kubeconfig loaded (context=%s, default_namespace=%s)",
+        context_name,
+        default_namespace,
+    )
+    return KubeContext(
+        api_client=client.ApiClient(),
+        context_name=context_name,
+        default_namespace=default_namespace,
+    )
+
+
+def _resolve_context_metadata(
+    kubeconfig_path: str | None, requested_context: str | None
+) -> tuple[str, str]:
+    """Return (context_name, default_namespace) for the active context.
+
+    Falls back to ``("unknown", "default")`` if the kubeconfig cannot be parsed.
+    """
+    try:
+        contexts, active = config.list_kube_config_contexts(config_file=kubeconfig_path)
+    except ConfigException:
+        return (requested_context or "unknown", "default")
+
+    target_name = requested_context or (active["name"] if active else None)
+    context_name = target_name or "unknown"
+    default_namespace = "default"
+    for entry in contexts or []:
+        if entry["name"] == target_name:
+            ns = (entry.get("context") or {}).get("namespace")
+            if ns:
+                default_namespace = ns
+            break
+    return (context_name, default_namespace)

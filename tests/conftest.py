@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,12 +12,12 @@ from k8s_mcp_server.kube.client import KubeContext
 
 @pytest.fixture
 def kube_context() -> KubeContext:
-    """A ``KubeContext`` with a MagicMock api_client and a fixed context name.
-
-    Tests that need to control K8s API responses should use the ``mock_core_v1``
-    fixture (or monkeypatch the relevant API class in their tool module).
-    """
-    return KubeContext(api_client=MagicMock(), context_name="test-context")
+    """A ``KubeContext`` with a MagicMock api_client and a fixed context name."""
+    return KubeContext(
+        api_client=MagicMock(),
+        context_name="test-context",
+        default_namespace="default",
+    )
 
 
 @pytest.fixture
@@ -33,3 +33,20 @@ def mock_core_v1(monkeypatch: pytest.MonkeyPatch) -> Iterator[MagicMock]:
         lambda _client: api,
     )
     yield api
+
+
+@pytest.fixture
+def patch_core_v1(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], MagicMock]:
+    """Factory: patch ``CoreV1Api`` inside an arbitrary tool module.
+
+    Usage:
+        api = patch_core_v1("k8s_mcp_server.tools.pods")
+        api.list_namespaced_pod.return_value = ...
+    """
+
+    def _patch(target_module: str) -> MagicMock:
+        api = MagicMock()
+        monkeypatch.setattr(f"{target_module}.CoreV1Api", lambda _client: api)
+        return api
+
+    return _patch

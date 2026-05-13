@@ -15,6 +15,7 @@ from k8s_mcp_server import __version__
 from k8s_mcp_server.config import Settings
 from k8s_mcp_server.kube.client import KubeContext, load_context
 from k8s_mcp_server.tools import namespaces as _namespaces  # noqa: F401 — registers tool
+from k8s_mcp_server.tools import pods as _pods  # noqa: F401 — registers tool
 from k8s_mcp_server.tools._registry import RegisteredTool, ToolResult, all_tools
 
 logger = logging.getLogger(__name__)
