@@ -9,6 +9,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `tools/describe.py`: `describe_resource` tool. Polymorphic structured
+  describe view across seven kinds (`pod`, `deployment`, `service`,
+  `node`, `configmap`, `secret`, `ingress`). Output schema is consistent:
+  `{kind, name, namespace, metadata, spec_summary, status, events}`.
+  Kind is validated as a `Literal` in pydantic (invalid kinds rejected at
+  schema parse time). Per-kind dispatch via a `_Describer` dataclass
+  table — adding a new kind in v2 is a one-line table edit.
+- `describe_resource` namespace handling: namespaced kinds use
+  `resolve_read_namespaces` and reject `namespace="all"`; the
+  cluster-scoped `node` kind rejects the `namespace` input entirely with
+  a clear error.
+- `describe_resource` event handling: separate `list_namespaced_event`
+  call for event-generating namespaced kinds (pod / deployment / service
+  / ingress), capped at the 5 most recent. Uses kind+name field selector
+  (not UID — see project memory). Failure returns `events: []` with a
+  warning logged. Skipped for node (cluster-scoped), configmap, and
+  secret.
+- `describe_resource` 404 → friendly per-kind error,
+  e.g. `"pod 'X' not found in namespace 'Y'"` or `"node 'X' not found"`.
+- **SECURITY-CRITICAL for `kind="secret"`:** `spec_summary` returns only
+  `type` and `data_keys` (key names from `.data` ∪ `.stringData`); values
+  are NEVER surfaced. Additionally, the
+  `kubectl.kubernetes.io/last-applied-configuration` annotation is
+  stripped from the response because it embeds the full applied JSON
+  (including the base64-encoded `.data` block) for resources applied via
+  `kubectl apply -f`. Two dedicated tests pin both protections:
+  `test_describe_secret_redacts_data_values` and
+  `test_describe_secret_strips_last_applied_configuration_annotation`.
+  See `docs/SECURITY.md` "Sensitive Data Handling".
+- `tools/conftest.py`: `patch_networking_v1` factory fixture for tools
+  that use the networking.k8s.io/v1 API (currently only Ingress fetch).
+  Parallel to `patch_core_v1` and `patch_apps_v1`.
+- ~35 tests in `test_describe.py` covering: kind validation matrix
+  (parametrized over all 7 valid + 6 invalid forms), namespace handling
+  matrix (namespaced default / specific / all-rejected / outside-
+  allowlist / default-not-in-allowlist / cluster-scoped namespace
+  rejection / cluster-scoped no-namespace OK), per-kind happy paths for
+  all 7 kinds, the two Secret security tests, Secret-no-data, non-Secret
+  kinds keep the annotation, 404 namespaced + cluster-scoped, non-404 +
+  unexpected exceptions, event field selector, 5-cap, partial-success on
+  event failure (ApiException + unexpected), events skipped for
+  node/configmap/secret, events fetched for ingress, event_time sort
+  fallback, Service protocol TCP default, Ingress edge cases (missing
+  backend.service, port=None, port with neither number nor name), Node
+  Ready derivation matrix, defensive missing metadata/spec/status.
+
+### Known duplication
+
+- `_format_describe_event` (in `tools/describe.py`) is a slimmer variant of
+  `_format_event` in `tools/pods.py` and `tools/events.py` — it omits the
+  `involved_object` field (always redundant in describe because we filter
+  events by kind+name upfront). The three near-duplicates will be
+  consolidated in a follow-up refactor commit; the eventual shape (a
+  tuple-returning helper or base+extension) is intentionally left open
+  for that commit. Clearly commented in `describe.py`.
+- `_ready_status_from_conditions` (in `tools/describe.py`) duplicates
+  `_ready_status` in `tools/nodes.py`. Two callers is still within the
+  rule of three; extraction is deferred to a future commit when a third
+  tool needs Ready derivation. Clearly commented in `describe.py`.
+
 - `tools/nodes.py`: `get_node` tool. Returns full node detail — name,
   derived status, roles (reusing `list_nodes`' logic), age, kubelet
   version, raw capacity/allocatable Quantity strings, full conditions

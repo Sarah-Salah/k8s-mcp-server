@@ -15,6 +15,7 @@ from k8s_mcp_server import __version__
 from k8s_mcp_server.config import Settings
 from k8s_mcp_server.kube.client import KubeContext, load_context
 from k8s_mcp_server.tools import deployments as _deployments  # noqa: F401 — registers tool
+from k8s_mcp_server.tools import describe as _describe  # noqa: F401 — registers tool
 from k8s_mcp_server.tools import events as _events  # noqa: F401 — registers tool
 from k8s_mcp_server.tools import logs as _logs  # noqa: F401 — registers tool
 from k8s_mcp_server.tools import namespaces as _namespaces  # noqa: F401 — registers tool

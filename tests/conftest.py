@@ -72,3 +72,23 @@ def patch_apps_v1(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], MagicMock]
         return api
 
     return _patch
+
+
+@pytest.fixture
+def patch_networking_v1(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], MagicMock]:
+    """Factory: patch ``NetworkingV1Api`` inside an arbitrary tool module.
+
+    Mirrors :func:`patch_core_v1` and :func:`patch_apps_v1` for tools that
+    use the networking.k8s.io/v1 API (Ingress).
+
+    Usage:
+        api = patch_networking_v1("k8s_mcp_server.tools.describe")
+        api.read_namespaced_ingress.return_value = ...
+    """
+
+    def _patch(target_module: str) -> MagicMock:
+        api = MagicMock()
+        monkeypatch.setattr(f"{target_module}.NetworkingV1Api", lambda _client: api)
+        return api
+
+    return _patch
