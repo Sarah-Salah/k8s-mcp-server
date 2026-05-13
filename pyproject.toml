@@ -6,9 +6,10 @@ readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Sarah Salah", email = "sarah.salah.rizk@gmail.com" }]
 requires-python = ">=3.13"
-keywords = ["mcp", "kubernetes", "k8s", "claude", "anthropic", "ai"]
+keywords = ["mcp", "kubernetes", "k8s", "claude", "anthropic", "ai", "llm", "devops"]
 classifiers = [
     "Development Status :: 3 - Alpha",
+    "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
     "License :: OSI Approved :: MIT License",
@@ -16,6 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.13",
     "Topic :: System :: Systems Administration",
+    "Typing :: Typed",
 ]
 dependencies = [
     "mcp>=1.2,<2",
@@ -39,6 +41,7 @@ k8s-mcp-server = "k8s_mcp_server.__main__:main"
 Homepage = "https://github.com/Sarah-Salah/k8s-mcp-server"
 Repository = "https://github.com/Sarah-Salah/k8s-mcp-server"
 Issues = "https://github.com/Sarah-Salah/k8s-mcp-server/issues"
+Changelog = "https://github.com/Sarah-Salah/k8s-mcp-server/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling>=1.24"]

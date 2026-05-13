@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-<!-- No unreleased changes yet — see [0.1.0] below for the initial release. -->
+### Changed
+
+- `pyproject.toml`: prepared for v0.1.0 PyPI publish — added `Changelog`
+  URL to `[project.urls]`, added `llm` and `devops` keywords, added
+  `Environment :: Console` and `Typing :: Typed` classifiers.
+
+### Added
+
+- `src/k8s_mcp_server/py.typed` marker file so the `Typing :: Typed`
+  classifier delivers actual value to downstream type-checkers (mypy,
+  pyright). Empty file per PEP 561.
+- `docs/RELEASE_CHECKLIST.md`: full publish runbook with sanity checks
+  (incl. GitHub-username verification and the local kind integration
+  test), build verification, TestPyPI publish (Phase B), real PyPI
+  publish (Phase C), git tag + GitHub release (Phase D), and a rollback
+  plan with the explicit "PyPI does not allow re-uploading a yanked
+  version" warning. Documents `uv publish` as primary with
+  `twine upload` as fallback.
 
 ## [0.1.0] - 2026-05-13
 
