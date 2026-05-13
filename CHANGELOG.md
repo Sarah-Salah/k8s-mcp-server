@@ -515,6 +515,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `README.md`: production-ready restructure for portfolio review. Added
+  real CI / Python / License / MCP / PyPI badges (PyPI activates on
+  first publish; CI uses a `<USERNAME>` placeholder for the maintainer
+  to fill before push). Replaced the combined tools table with separate
+  Read (13) and Write (3) tables sourced from `docs/TOOLS_SPEC.md`.
+  Replaced the emoji-bulleted "What it does" section with two plain
+  sentences plus a competence-signal sentence about test count and
+  coverage. Added a Security Model section summarising the 5-layer
+  defense-in-depth; an Architecture section pointing at `CLAUDE.md`
+  §6.1; and an Examples one-liner pointing at `examples/`. Demo section
+  carries a TODO marker for the GIF that lands in Step 4. Trimmed the
+  duplicate "Enable writes" inline JSON in favour of a pointer to
+  `examples/`. License section expanded to "License & Acknowledgments"
+  crediting the upstream MCP SDK, kubernetes-py client, and pydantic.
 - Extracted shared `format_condition` helper to `utils/k8s_conditions.py`;
   `tools/pods.py` and `tools/deployments.py` now import from there. No
   behavior change. (Resolves the duplication introduced when `get_deployment`
