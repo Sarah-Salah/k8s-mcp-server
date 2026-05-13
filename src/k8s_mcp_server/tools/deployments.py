@@ -1,4 +1,4 @@
-"""``list_deployments`` tool: list deployments, optionally filtered by namespace/labels."""
+"""Deployment tools: ``list_deployments`` and ``get_deployment``."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ from k8s_mcp_server.tools._registry import ToolResult, register_tool
 from k8s_mcp_server.utils.formatting import age_human, age_seconds_since
 
 logger = logging.getLogger(__name__)
+
+_DEPLOYMENT_REVISION_LIMIT = 5
 
 
 class ListDeploymentsInput(BaseModel):
@@ -122,4 +124,232 @@ def _format_deployment(d: Any) -> dict[str, Any]:
         "age_seconds": secs,
         "age_human": age_human(secs),
         "image": image,
+    }
+
+
+class GetDeploymentInput(BaseModel):
+    """Inputs for ``get_deployment``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1)
+    namespace: str | None = None
+
+
+@register_tool(
+    name="get_deployment",
+    description=(
+        "Get full deployment state with rollout history. Includes all replica "
+        "counts (desired/ready/available/updated/unavailable), strategy, "
+        "selector, the full container list with images, conditions with "
+        "transition age, and the last 5 ReplicaSets (rollout history) owned "
+        "by this deployment. namespace='all' is rejected — specify a single "
+        "namespace."
+    ),
+    input_model=GetDeploymentInput,
+)
+async def get_deployment(
+    inp: GetDeploymentInput,
+    *,
+    ctx: KubeContext,
+    settings: Settings,
+) -> ToolResult:
+    """Get full deployment state with rollout history (last 5 revisions)."""
+    if inp.namespace == "all":
+        return ToolResult(
+            success=False,
+            error=(
+                "namespace='all' is not supported for get_deployment; specify a single namespace"
+            ),
+        )
+
+    try:
+        targets = resolve_read_namespaces(inp.namespace, settings=settings, ctx=ctx)
+    except NamespaceNotAllowedError as exc:
+        return ToolResult(success=False, error=str(exc))
+
+    assert targets is not None and len(targets) == 1
+    namespace = targets[0]
+
+    api = AppsV1Api(ctx.api_client)
+    try:
+        deployment = await asyncio.to_thread(
+            api.read_namespaced_deployment, name=inp.name, namespace=namespace
+        )
+    except ApiException as exc:
+        if exc.status == 404:
+            return ToolResult(
+                success=False,
+                error=f"deployment '{inp.name}' not found in namespace '{namespace}'",
+            )
+        return ToolResult(
+            success=False,
+            error=f"kubernetes API error: {exc.reason or exc.status}",
+        )
+    except Exception as exc:
+        logger.exception("get_deployment failed")
+        return ToolResult(success=False, error=f"unexpected error: {exc}")
+
+    history = await _fetch_replica_sets(api, deployment=deployment, namespace=namespace)
+    return ToolResult(success=True, data=_format_deployment_detail(deployment, history))
+
+
+async def _fetch_replica_sets(
+    api: AppsV1Api, *, deployment: Any, namespace: str
+) -> list[dict[str, Any]]:
+    """Fetch ReplicaSets owned by ``deployment`` and return revision-sorted summaries.
+
+    Uses ``spec.selector.match_labels`` for the API-side label filter, then
+    narrows client-side to ReplicaSets whose ``owner_references`` include the
+    deployment's UID and ``kind="Deployment"``. UID is canonical here (unlike
+    the events case): owner_references are populated by the controller.
+    """
+    metadata = getattr(deployment, "metadata", None)
+    spec = getattr(deployment, "spec", None)
+    selector = getattr(spec, "selector", None) if spec else None
+    match_labels = (getattr(selector, "match_labels", None) or {}) if selector else {}
+    if not match_labels:
+        return []
+
+    label_selector = ",".join(f"{k}={v}" for k, v in match_labels.items())
+    name = getattr(metadata, "name", None) if metadata else None
+    try:
+        result = await asyncio.to_thread(
+            api.list_namespaced_replica_set,
+            namespace=namespace,
+            label_selector=label_selector,
+        )
+    except ApiException:
+        logger.warning("get_deployment: failed to fetch replicasets for %s/%s", namespace, name)
+        return []
+    except Exception:
+        logger.exception(
+            "get_deployment: unexpected error fetching replicasets for %s/%s",
+            namespace,
+            name,
+        )
+        return []
+
+    deployment_uid = getattr(metadata, "uid", None) if metadata else None
+    owned = [rs for rs in result.items if _is_owned_by(rs, deployment_uid=deployment_uid)]
+    owned.sort(key=_revision_of, reverse=True)
+    return [_format_replicaset(rs) for rs in owned[:_DEPLOYMENT_REVISION_LIMIT]]
+
+
+def _is_owned_by(rs: Any, *, deployment_uid: str | None) -> bool:
+    if deployment_uid is None:
+        return False
+    metadata = getattr(rs, "metadata", None)
+    owners = (getattr(metadata, "owner_references", None) or []) if metadata else []
+    return any(
+        getattr(o, "uid", None) == deployment_uid and getattr(o, "kind", None) == "Deployment"
+        for o in owners
+    )
+
+
+def _revision_of(rs: Any) -> int:
+    """Parse the ``deployment.kubernetes.io/revision`` annotation as int; -1 if missing."""
+    metadata = getattr(rs, "metadata", None)
+    annotations = (getattr(metadata, "annotations", None) or {}) if metadata else {}
+    raw = annotations.get("deployment.kubernetes.io/revision")
+    if raw is None:
+        return -1
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return -1
+
+
+def _format_deployment_detail(deployment: Any, history: list[dict[str, Any]]) -> dict[str, Any]:
+    metadata = getattr(deployment, "metadata", None)
+    spec = getattr(deployment, "spec", None)
+    status = getattr(deployment, "status", None)
+
+    creation = getattr(metadata, "creation_timestamp", None) if metadata else None
+    secs = age_seconds_since(creation)
+
+    strategy = getattr(spec, "strategy", None) if spec else None
+    strategy_type = getattr(strategy, "type", None) if strategy else None
+
+    selector = getattr(spec, "selector", None) if spec else None
+    match_labels = (getattr(selector, "match_labels", None) or {}) if selector else {}
+
+    template = getattr(spec, "template", None) if spec else None
+    pod_spec = getattr(template, "spec", None) if template else None
+    containers = (getattr(pod_spec, "containers", None) or []) if pod_spec else []
+
+    conditions = (getattr(status, "conditions", None) or []) if status else []
+
+    return {
+        "name": (getattr(metadata, "name", None) if metadata else None) or "Unknown",
+        "namespace": (getattr(metadata, "namespace", None) if metadata else None) or "Unknown",
+        "age_seconds": secs,
+        "age_human": age_human(secs),
+        "strategy": strategy_type,
+        "selector": dict(match_labels),
+        "replicas_desired": getattr(spec, "replicas", None) if spec else None,
+        "replicas_ready": (getattr(status, "ready_replicas", 0) or 0) if status else 0,
+        "replicas_available": ((getattr(status, "available_replicas", 0) or 0) if status else 0),
+        "replicas_updated": (getattr(status, "updated_replicas", 0) or 0) if status else 0,
+        "replicas_unavailable": (
+            (getattr(status, "unavailable_replicas", 0) or 0) if status else 0
+        ),
+        "containers": [_container_summary(c) for c in containers],
+        "conditions": [_format_condition(c) for c in conditions],
+        "rollout_history": history,
+    }
+
+
+def _format_replicaset(rs: Any) -> dict[str, Any]:
+    metadata = getattr(rs, "metadata", None)
+    spec = getattr(rs, "spec", None)
+    status = getattr(rs, "status", None)
+
+    creation = getattr(metadata, "creation_timestamp", None) if metadata else None
+    secs = age_seconds_since(creation)
+
+    annotations = (getattr(metadata, "annotations", None) or {}) if metadata else {}
+    revision_raw = annotations.get("deployment.kubernetes.io/revision")
+    try:
+        revision = int(revision_raw) if revision_raw is not None else None
+    except (TypeError, ValueError):
+        revision = None
+    change_cause = annotations.get("kubernetes.io/change-cause")
+
+    template = getattr(spec, "template", None) if spec else None
+    pod_spec = getattr(template, "spec", None) if template else None
+    containers = (getattr(pod_spec, "containers", None) or []) if pod_spec else []
+
+    return {
+        "revision": revision,
+        "name": (getattr(metadata, "name", None) if metadata else None) or "Unknown",
+        "replicas_desired": getattr(spec, "replicas", None) if spec else None,
+        "replicas_ready": (getattr(status, "ready_replicas", 0) or 0) if status else 0,
+        "age_seconds": secs,
+        "age_human": age_human(secs),
+        "change_cause": change_cause,
+        "containers": [_container_summary(c) for c in containers],
+    }
+
+
+def _container_summary(c: Any) -> dict[str, Any]:
+    return {"name": getattr(c, "name", None), "image": getattr(c, "image", None)}
+
+
+# DUPLICATION: this helper is also defined in src/k8s_mcp_server/tools/pods.py
+# (as _format_condition over V1PodCondition). The shape is identical because
+# V1PodCondition and V1DeploymentCondition share the same fields. Per the
+# rule of three, this duplication will be extracted to a shared helper when a
+# third condition-using tool lands (likely get_node). Until then, keeping two
+# copies is cheaper than a parallel refactor cycle.
+def _format_condition(cond: Any) -> dict[str, Any]:
+    transition = getattr(cond, "last_transition_time", None)
+    return {
+        "type": getattr(cond, "type", None),
+        "status": getattr(cond, "status", None),
+        "reason": getattr(cond, "reason", None),
+        "message": getattr(cond, "message", None),
+        "last_transition_age_seconds": (
+            age_seconds_since(transition) if transition is not None else None
+        ),
     }

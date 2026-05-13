@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `tools/deployments.py`: `get_deployment` tool. Returns full deployment
+  state — name, namespace, age, strategy (RollingUpdate / Recreate),
+  `selector.match_labels`, all five replica counts
+  (`replicas_desired`/`ready`/`available`/`updated`/`unavailable`), full
+  container list with images, conditions (with
+  `last_transition_age_seconds`), and the last 5 ReplicaSets as
+  `rollout_history` (revision-sorted descending).
+- `get_deployment` namespace handling: rejects `namespace="all"` upfront;
+  otherwise defers to `resolve_read_namespaces`.
+- `get_deployment` 404 → friendly
+  `"deployment 'X' not found in namespace 'Y'"`.
+- `get_deployment` rollout-history fetch: separate
+  `list_namespaced_replica_set` call with `label_selector` built from
+  `spec.selector.match_labels`. Returned ReplicaSets are filtered
+  client-side to those whose `owner_references` include the deployment's
+  UID AND `kind="Deployment"` (UID is canonical for owner_references —
+  distinct from the kubelet-null-UID issue that prevents UID filtering on
+  events). Sorted by the `deployment.kubernetes.io/revision` annotation
+  parsed as int (missing/unparseable → `-1`, sorts to bottom). Capped at 5.
+  `change_cause` surfaced from the `kubernetes.io/change-cause` annotation
+  (often `None`).
+- `get_deployment` partial-success handling: if `list_namespaced_replica_set`
+  fails (RBAC, API error), the deployment data is still returned with
+  `rollout_history: []` and a warning logged. Same pattern as `get_pod`'s
+  event-fetch failure.
+- 20 tests for `get_deployment` covering happy path, namespace allowlist
+  matrix, 404 / 500 / unexpected error, label-selector construction,
+  owner-UID + kind filtering, revision sort & 5-cap, missing-revision
+  fallback, RS-fetch partial-success (ApiException + unexpected), empty
+  `match_labels` skipping the RS call, full container list, status-replicas
+  None→0 coercion, defensive missing metadata/spec/status, and input
+  validation.
+
+### Known duplication
+
+- `_format_condition` is duplicated between `tools/pods.py` and
+  `tools/deployments.py`. The shape is identical because `V1PodCondition`
+  and `V1DeploymentCondition` share the same fields. Per the rule of three,
+  extraction is deferred to the third condition-using tool (likely
+  `get_node` when nodes land); the helper is flat enough (5-statement dict
+  construction) that an immediate refactor cycle would cost more than the
+  duplication. Clearly commented in both modules.
+
 - `tools/deployments.py`: `list_deployments` tool. Inputs: `namespace`,
   `label_selector`, `limit` (default 100, 1–1000). Output per deployment:
   `{name, namespace, replicas_desired, replicas_ready, age_seconds,
