@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `tools/logs.py`: `get_pod_logs` tool. Inputs: `name` (required), `namespace`,
+  `container`, `tail_lines` (default 200, 1–10000), `since_seconds`,
+  `previous` (default False), `max_bytes` (default 256 KiB, 1 KiB – 1 MiB).
+  `tail_lines` and `since_seconds` are forwarded to the K8s API directly so
+  the cluster does the filtering, not us.
+- `get_pod_logs` namespace handling: rejects `namespace="all"` upfront;
+  otherwise defers to `resolve_read_namespaces` (same allowlist semantics as
+  `get_pod`).
+- `get_pod_logs` container resolution: when `container` is omitted, pre-flights
+  `read_namespaced_pod` to enumerate containers. Auto-picks the sole regular
+  container if there is only one; otherwise returns an error listing every
+  container name and pointing at the `container` parameter. Ephemeral
+  containers (from `kubectl debug`) are intentionally not auto-resolved in v1
+  — fetchable by passing `container=<name>` explicitly. Documented as a known
+  limitation in the tool's docstring.
+- `get_pod_logs` byte cap: response is trimmed from the start (most recent
+  kept) when the encoded UTF-8 length exceeds `max_bytes`; a partial first
+  line is dropped so output starts cleanly. `truncated=True` is set only when
+  the byte cap fires — `tail_lines` / `since_seconds` are user-requested
+  filters and do not flip the flag.
+- `get_pod_logs` friendly error formatting:
+  - `404` → `pod 'X' not found in namespace 'Y'`
+  - `400 + previous=True` → `no previous logs for pod 'X' container 'Y':
+    the container has not been restarted, or no previous instance exists`
+  - other statuses → `kubernetes API error: <reason>`
+- `get_pod_logs` logging: only metadata (pod, namespace, container, byte
+  count, truncated, previous) is logged. Raw log content is never passed to
+  any logger to avoid leaking PII, credentials in stack traces, internal
+  URLs, or DB connection strings.
+- 24 tests for `get_pod_logs` covering the namespace allowlist matrix, the
+  pre-flight container resolver (auto-pick / multi-container error / no
+  containers / 404 / 500 / missing spec / nameless container), K8s param
+  forwarding, all three friendly-error branches, truncation
+  (under cap / over cap with newlines / over cap with no newlines / empty /
+  None from API), and input validation.
+
 - `tools/pods.py`: `get_pod` tool. Returns full pod state — name, namespace,
   phase, node, pod_ip, age, containers, init containers, conditions, and the
   10 most recent events (sorted by `last_timestamp`). Conditions include
