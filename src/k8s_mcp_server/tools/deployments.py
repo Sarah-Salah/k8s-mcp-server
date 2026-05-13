@@ -15,6 +15,7 @@ from k8s_mcp_server.kube.client import KubeContext
 from k8s_mcp_server.kube.safe import NamespaceNotAllowedError, resolve_read_namespaces
 from k8s_mcp_server.tools._registry import ToolResult, register_tool
 from k8s_mcp_server.utils.formatting import age_human, age_seconds_since
+from k8s_mcp_server.utils.k8s_conditions import format_condition
 
 logger = logging.getLogger(__name__)
 
@@ -295,7 +296,7 @@ def _format_deployment_detail(deployment: Any, history: list[dict[str, Any]]) ->
             (getattr(status, "unavailable_replicas", 0) or 0) if status else 0
         ),
         "containers": [_container_summary(c) for c in containers],
-        "conditions": [_format_condition(c) for c in conditions],
+        "conditions": [format_condition(c) for c in conditions],
         "rollout_history": history,
     }
 
@@ -334,22 +335,3 @@ def _format_replicaset(rs: Any) -> dict[str, Any]:
 
 def _container_summary(c: Any) -> dict[str, Any]:
     return {"name": getattr(c, "name", None), "image": getattr(c, "image", None)}
-
-
-# DUPLICATION: this helper is also defined in src/k8s_mcp_server/tools/pods.py
-# (as _format_condition over V1PodCondition). The shape is identical because
-# V1PodCondition and V1DeploymentCondition share the same fields. Per the
-# rule of three, this duplication will be extracted to a shared helper when a
-# third condition-using tool lands (likely get_node). Until then, keeping two
-# copies is cheaper than a parallel refactor cycle.
-def _format_condition(cond: Any) -> dict[str, Any]:
-    transition = getattr(cond, "last_transition_time", None)
-    return {
-        "type": getattr(cond, "type", None),
-        "status": getattr(cond, "status", None),
-        "reason": getattr(cond, "reason", None),
-        "message": getattr(cond, "message", None),
-        "last_transition_age_seconds": (
-            age_seconds_since(transition) if transition is not None else None
-        ),
-    }

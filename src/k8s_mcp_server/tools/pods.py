@@ -15,6 +15,7 @@ from k8s_mcp_server.kube.client import KubeContext
 from k8s_mcp_server.kube.safe import NamespaceNotAllowedError, resolve_read_namespaces
 from k8s_mcp_server.tools._registry import ToolResult, register_tool
 from k8s_mcp_server.utils.formatting import age_human, age_seconds_since
+from k8s_mcp_server.utils.k8s_conditions import format_condition
 from k8s_mcp_server.utils.k8s_events import event_sort_key
 
 logger = logging.getLogger(__name__)
@@ -246,7 +247,7 @@ def _format_pod_detail(pod: Any, events: list[dict[str, Any]]) -> dict[str, Any]
         "age_human": age_human(secs),
         "containers": [_format_container_status(c) for c in container_statuses],
         "init_containers": [_format_container_status(c) for c in init_container_statuses],
-        "conditions": [_format_condition(c) for c in conditions],
+        "conditions": [format_condition(c) for c in conditions],
         "events": events,
     }
 
@@ -278,19 +279,6 @@ def _format_container_status(c: Any) -> dict[str, Any]:
             "reason": state_reason,
             "message": state_message,
         },
-    }
-
-
-def _format_condition(cond: Any) -> dict[str, Any]:
-    transition = getattr(cond, "last_transition_time", None)
-    return {
-        "type": getattr(cond, "type", None),
-        "status": getattr(cond, "status", None),
-        "reason": getattr(cond, "reason", None),
-        "message": getattr(cond, "message", None),
-        "last_transition_age_seconds": (
-            age_seconds_since(transition) if transition is not None else None
-        ),
     }
 
 

@@ -97,16 +97,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   None→0 coercion, defensive missing metadata/spec/status, and input
   validation.
 
-### Known duplication
-
-- `_format_condition` is duplicated between `tools/pods.py` and
-  `tools/deployments.py`. The shape is identical because `V1PodCondition`
-  and `V1DeploymentCondition` share the same fields. Per the rule of three,
-  extraction is deferred to the third condition-using tool (likely
-  `get_node` when nodes land); the helper is flat enough (5-statement dict
-  construction) that an immediate refactor cycle would cost more than the
-  duplication. Clearly commented in both modules.
-
 - `tools/deployments.py`: `list_deployments` tool. Inputs: `namespace`,
   `label_selector`, `limit` (default 100, 1–1000). Output per deployment:
   `{name, namespace, replicas_desired, replicas_ready, age_seconds,
@@ -135,6 +125,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Extracted shared `format_condition` helper to `utils/k8s_conditions.py`;
+  `tools/pods.py` and `tools/deployments.py` now import from there. No
+  behavior change. (Resolves the duplication introduced when `get_deployment`
+  landed; promoted on the third condition-using tool surface per the rule
+  of three.)
 - Extracted shared `event_sort_key` helper to `utils/k8s_events.py`;
   `tools/pods.py` and `tools/events.py` now import from there. No behavior
   change. (Resolves the temporary duplication introduced when `list_events`
