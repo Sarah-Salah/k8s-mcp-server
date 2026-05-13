@@ -1,4 +1,4 @@
-"""Pod tools: ``list_pods`` and ``get_pod``."""
+"""Pod tools: ``list_pods``, ``get_pod``, ``get_pod_logs``, ``delete_pod``."""
 
 from __future__ import annotations
 
@@ -12,8 +12,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from k8s_mcp_server.config import Settings
 from k8s_mcp_server.kube.client import KubeContext
-from k8s_mcp_server.kube.safe import NamespaceNotAllowedError, resolve_read_namespaces
+from k8s_mcp_server.kube.safe import (
+    NamespaceNotAllowedError,
+    assert_writes_enabled,
+    resolve_read_namespaces,
+)
 from k8s_mcp_server.tools._registry import ToolResult, register_tool
+from k8s_mcp_server.utils.audit import log_write_operation
 from k8s_mcp_server.utils.formatting import age_human, age_seconds_since
 from k8s_mcp_server.utils.k8s_conditions import format_condition
 from k8s_mcp_server.utils.k8s_events import event_sort_key
@@ -293,3 +298,171 @@ def _format_event(event: Any) -> dict[str, Any]:
         "first_seen_age_seconds": age_seconds_since(first) if first is not None else None,
         "last_seen_age_seconds": age_seconds_since(last) if last is not None else None,
     }
+
+
+# ===========================================================================
+# delete_pod (write tool — see CLAUDE.md §6.1)
+# ===========================================================================
+
+
+class DeletePodInput(BaseModel):
+    """Inputs for ``delete_pod``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1)
+    namespace: str | None = None
+    force: bool = False
+    dry_run: bool = True
+
+
+@register_tool(
+    name="delete_pod",
+    description=(
+        "Delete a pod by name. Useful when a pod is stuck and you want it "
+        "rescheduled. dry_run=True (default) validates without applying. "
+        "force=True sets grace_period_seconds=0 — equivalent to "
+        "'kubectl delete pod X --force --grace-period=0' — immediate kill "
+        "that removes the pod from etcd even if the kubelet is "
+        "unresponsive. If the pod is managed by a Deployment / StatefulSet "
+        "/ DaemonSet, a new one will be created automatically. "
+        "namespace='all' is rejected — specify a single namespace."
+    ),
+    input_model=DeletePodInput,
+    is_write=True,
+)
+async def delete_pod(
+    inp: DeletePodInput,
+    *,
+    ctx: KubeContext,
+    settings: Settings,
+) -> ToolResult:
+    """Delete a pod by name.
+
+    See CLAUDE.md §6.1 for the Write Tool Contract. The ``force`` flag is
+    independent of ``dry_run``: ``force=True, dry_run=True`` validates an
+    immediate-kill without applying it. ``force=True`` MUST appear in the
+    audit log line so post-incident review can find immediate-kill events
+    via grep.
+    """
+    if (denied := assert_writes_enabled(settings)) is not None:
+        return denied  # Layer 3
+
+    if inp.namespace == "all":
+        return ToolResult(
+            success=False,
+            error=("namespace='all' is not supported for delete_pod; specify a single namespace"),
+        )
+
+    try:
+        targets = resolve_read_namespaces(inp.namespace, settings=settings, ctx=ctx)
+    except NamespaceNotAllowedError as exc:
+        return ToolResult(success=False, error=str(exc))
+
+    assert targets is not None and len(targets) == 1
+    namespace = targets[0]
+
+    api = CoreV1Api(ctx.api_client)
+
+    # 1. Read for owner-reference audit context. Failed read → no audit.
+    try:
+        pod = await asyncio.to_thread(api.read_namespaced_pod, name=inp.name, namespace=namespace)
+    except ApiException as exc:
+        if exc.status == 404:
+            return ToolResult(
+                success=False,
+                error=f"pod '{inp.name}' not found in namespace '{namespace}'",
+            )
+        return ToolResult(
+            success=False,
+            error=f"kubernetes API error: {exc.reason or exc.status}",
+        )
+    except Exception as exc:
+        logger.exception("delete_pod read failed")
+        return ToolResult(success=False, error=f"unexpected error: {exc}")
+
+    controller_kind, controller_name = _owner_controller_summary(pod)
+    audit: dict[str, Any] = {
+        "namespace": namespace,
+        "name": inp.name,
+        "controller_kind": controller_kind,
+        "controller_name": controller_name,
+        # SECURITY-CRITICAL: `force` MUST be in every audit record so
+        # post-incident review can grep for immediate-kill events
+        # (`grep "force=True"` on the audit log). Do not drop this field.
+        "force": inp.force,
+        "dry_run": inp.dry_run,
+    }
+
+    # 2. Audit BEFORE the delete attempt — failed deletes still get audited.
+    log_write_operation("delete_pod", **audit)
+
+    # 3. Delete. Two independent kwargs:
+    #    - dry_run="All" (Layer 4 — server-side validate-only)
+    #    - grace_period_seconds=0 (force=True — immediate kill)
+    delete_kwargs: dict[str, Any] = {}
+    if inp.dry_run:
+        delete_kwargs["dry_run"] = "All"
+    if inp.force:
+        delete_kwargs["grace_period_seconds"] = 0
+    try:
+        await asyncio.to_thread(
+            api.delete_namespaced_pod,
+            name=inp.name,
+            namespace=namespace,
+            **delete_kwargs,
+        )
+    except ApiException as exc:
+        if exc.status == 404:
+            # Race: pod deleted between read and delete. Same friendly
+            # error as 404-on-read so the LLM sees diagnostic equivalence.
+            return ToolResult(
+                success=False,
+                error=f"pod '{inp.name}' not found in namespace '{namespace}'",
+                audit=audit,
+            )
+        return ToolResult(
+            success=False,
+            error=f"kubernetes API error: {exc.reason or exc.status}",
+            audit=audit,
+        )
+    except Exception as exc:
+        logger.exception("delete_pod delete failed")
+        return ToolResult(success=False, error=f"unexpected error: {exc}", audit=audit)
+
+    return ToolResult(
+        success=True,
+        data={
+            "namespace": namespace,
+            "name": inp.name,
+            "controller_kind": controller_kind,
+            "controller_name": controller_name,
+            "force": inp.force,
+            "dry_run": inp.dry_run,
+            "applied": not inp.dry_run,
+        },
+        audit=audit,
+    )
+
+
+def _owner_controller_summary(pod: Any) -> tuple[str | None, str | None]:
+    """Return ``(controller_kind, controller_name)`` from the pod's first owner ref.
+
+    The controller chain for a Deployment-owned pod is
+    Deployment → ReplicaSet → Pod — the pod's direct ``owner_references``
+    entry is the **ReplicaSet**, not the Deployment. This is correct K8s
+    behaviour, not a bug; the tests pin ``controller_kind="ReplicaSet"`` for
+    Deployment-owned pods explicitly. StatefulSet/DaemonSet/Job-managed pods
+    have those controllers as direct owners.
+
+    Pods can in theory have multiple ``owner_references``; in practice each
+    pod has exactly one. We take ``[0]`` rather than filtering by
+    ``controller=True`` — simpler and matches the diagnostic intent for the
+    common case. Bare pods return ``(None, None)``.
+    """
+    metadata = getattr(pod, "metadata", None)
+    owners = (getattr(metadata, "owner_references", None) or []) if metadata else []
+    if not owners:
+        return (None, None)
+    first = owners[0]
+    return (getattr(first, "kind", None), getattr(first, "name", None))

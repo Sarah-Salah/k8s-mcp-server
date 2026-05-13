@@ -9,6 +9,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `tools/pods.py`: `delete_pod` write tool (registered with `is_write=True`)
+  — the last tool in v1. Inputs: `name`, `namespace`, `force` (default
+  `False`), `dry_run` (default `True`). Follows the Write Tool Contract
+  from CLAUDE.md §6.1:
+  - **Layer 3**: `assert_writes_enabled(settings)` as the first line —
+    pinned by `test_delete_pod_writes_disabled_returns_layer3_error_before_any_api_call`.
+  - **Rejects `namespace="all"`** upfront.
+  - **Reads the pod first** to capture owner-reference info for audit;
+    failed read → no audit (same asymmetry as `scale_deployment`).
+  - **`force` and `dry_run` are independent flags.** All four combinations
+    are valid and tested:
+    - `force=False, dry_run=True` (default — safest): validate-only,
+      K8s uses pod's `terminationGracePeriodSeconds`
+    - `force=False, dry_run=False`: graceful delete with the pod's
+      configured grace period
+    - `force=True, dry_run=True`: validate an immediate-kill without
+      applying
+    - `force=True, dry_run=False`: actual immediate-kill — three opt-ins
+      required (`--enable-writes` + `force=True` + `dry_run=False`)
+  - **`force=True` → `grace_period_seconds=0`** on the K8s delete call
+    (equivalent to `kubectl delete pod X --force --grace-period=0`).
+    `force=False` omits the kwarg entirely so K8s uses the pod's
+    `terminationGracePeriodSeconds` spec.
+  - **`force` is SECURITY-CRITICAL in the audit log.** Pinned by
+    `test_delete_pod_audit_log_includes_force_true_field_for_post_incident_grep`:
+    the audit log line must include `force=True` so post-incident
+    reviewers can grep for immediate-kill events without context.
+  - **Owner-reference capture** via `_owner_controller_summary`: takes
+    `metadata.owner_references[0]` (kind, name) — `None` for bare pods.
+    Pods owned by a Deployment surface `controller_kind="ReplicaSet"` not
+    `"Deployment"` because the pod's direct owner is the RS (the chain
+    is Deployment → ReplicaSet → Pod). Pinned by
+    `test_delete_pod_captures_replicaset_owner_for_deployment_pod` so
+    future maintainers don't "fix" it.
+  - **`propagation_policy` NOT passed** — pods own nothing that needs
+    cascading deletion.
+  - **404 race condition** between read and delete returns the same
+    friendly `"pod 'X' not found in namespace 'Y'"` as 404-on-read.
+- `docs/TOOLS_SPEC.md` tool #16 updated: replaced
+  `grace_period_seconds: int = 30` with `force: bool = False` (binary
+  opt-in is much more LLM-friendly than a numeric value with an
+  arbitrary K8s default). Output expanded with `controller_kind`,
+  `controller_name`, `force`. Added a note on the kubectl-equivalence
+  of `force=True` and the audit-grep contract.
+- 26 tests for `delete_pod` in `test_pods.py` covering the full Write
+  Tool Contract: Layer 3 enforcement (no API call when writes disabled),
+  namespace handling matrix, dry_run semantics + default True, **the
+  full `force` matrix** (force=True→`grace_period_seconds=0`,
+  force=False→kwarg absent, default=False, force+dry_run combinations
+  both directions), **owner-reference capture across Deployment/
+  StatefulSet/DaemonSet/bare-pod cases** (with the ReplicaSet pin
+  serving as documentation), defensive missing owner_references and
+  metadata, 404 on read + 404 on delete race + non-404 errors +
+  unexpected exceptions on both calls, audit asymmetry (no audit on
+  failed-read, audit on failed-delete), **the security-critical
+  `force=True` grep test**, `is_write=True` registration sanity, and
+  input validation.
+
 - `tools/deployments.py`: `restart_deployment` write tool (registered with
   `is_write=True`). Inputs: `name`, `namespace`, `dry_run` (default `True`).
   Follows the Write Tool Contract from CLAUDE.md §6.1:

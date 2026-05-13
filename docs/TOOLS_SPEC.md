@@ -301,9 +301,13 @@ If the server was started with `--namespaces ns1,ns2`:
 **Input:**
 - `name: str`
 - `namespace: str | None`
-- `grace_period_seconds: int = 30`
+- `force: bool = False` — when `True`, sets `grace_period_seconds=0` on the K8s delete call (equivalent to `kubectl delete pod X --force --grace-period=0`). Immediate kill; removes the pod from etcd even if the kubelet is unresponsive.
 - `dry_run: bool = True`
 
-**Output:** `{name, namespace, dry_run, applied}`
+**Output:** `{name, namespace, controller_kind, controller_name, force, dry_run, applied}`
 
-> Note: this only deletes the pod. If the pod is managed by a Deployment / StatefulSet / DaemonSet, a new one will be created automatically. The tool should mention this in its description.
+`controller_kind` / `controller_name` come from the pod's first `owner_references` entry: typically `"ReplicaSet"` for Deployment-owned pods (the pod's direct owner is the ReplicaSet, not the Deployment), `"StatefulSet"` / `"DaemonSet"` / `"Job"` for those controllers, and `(null, null)` for bare pods.
+
+`force` appears in the audit log line — post-incident review can grep `force=True` to find immediate-kill events without additional context.
+
+> Note: this only deletes the pod. If the pod is managed by a Deployment / StatefulSet / DaemonSet, a new one will be created automatically. The tool description mentions this.
