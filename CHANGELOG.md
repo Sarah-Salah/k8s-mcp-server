@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `tools/deployments.py`: `restart_deployment` write tool (registered with
+  `is_write=True`). Inputs: `name`, `namespace`, `dry_run` (default `True`).
+  Follows the Write Tool Contract from CLAUDE.md §6.1:
+  - **Layer 3**: `assert_writes_enabled(settings)` as the first line —
+    pinned by `test_restart_writes_disabled_returns_layer3_error_before_any_api_call`.
+  - **Rejects `namespace="all"`** upfront.
+  - **No read-before-patch** (unlike `scale_deployment`): restart has no
+    "from" state worth capturing, so audit is always emitted before the
+    single patch attempt and always present in `ToolResult.audit` (success
+    or failure). No read-vs-patch asymmetry.
+  - **Patches the main `Deployment` resource** (NOT the `/scale`
+    sub-resource) with a deep-nested JSON-merge body setting
+    `spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]`.
+    This mutates the pod template, which changes the template hash and
+    triggers the deployment controller to spin up a new ReplicaSet —
+    exactly what `kubectl rollout restart` does.
+  - **Annotation key matches kubectl byte-for-byte** so external tools
+    (Argo CD, Flux, observability dashboards) that parse rollout history
+    find our restarts too.
+  - **Timestamp generated ONCE per call** in RFC3339 format with `Z`
+    suffix (e.g. `"2026-05-13T10:30:00Z"`) — the same Python string flows
+    to the patch body, the audit log line, and the response. Pinned by
+    `test_restart_timestamp_is_same_value_in_body_audit_and_response`
+    (extracts the value from the patch call_args and asserts identity
+    across all three sites).
+  - **Format matches kubectl** byte-for-byte (Z-suffix, seconds
+    precision) — pinned by `test_restart_timestamp_is_rfc3339_with_z_suffix`.
+  - **Layer 4**: `dry_run="All"` forwarded when `dry_run=True`; omitted
+    when `dry_run=False`; `applied` flag reflects.
+  - **Layer 5**: `log_write_operation("restart_deployment", **audit)`
+    emits before the patch attempt.
+- `docs/TOOLS_SPEC.md` tool #15 output field renamed
+  `restart_triggered_at` → `restarted_at` (aligning with the kubectl
+  annotation key `restartedAt` and the audit-log keyval style). Added a
+  note about the kubectl-interop rationale and timestamp lifecycle.
+- 19 tests for `restart_deployment` in `test_deployments.py` covering
+  the full Write Tool Contract: Layer 3 enforcement (no API call when
+  writes disabled), namespace handling matrix, dry_run semantics + default
+  True, **patch body deep-nesting and exact shape** including the canonical
+  annotation key, **uses main deployment resource not /scale**,
+  **no-read-before-patch**, **timestamp identity across body/audit/response**,
+  **timestamp format matches kubectl RFC3339-Z**, audit envelope + log
+  line presence, audit on failed patch (always — no asymmetry), 404
+  friendly error, non-404 API error, unexpected exception, `is_write=True`
+  registration sanity, and input validation.
+
 - `tools/deployments.py`: `scale_deployment` write tool (registered with
   `is_write=True`). Inputs: `name`, `namespace`, `replicas` (`0–1000`),
   `dry_run` (default `True`). Follows the Write Tool Contract from

@@ -19,9 +19,11 @@ from k8s_mcp_server.tools._registry import ToolResult
 from k8s_mcp_server.tools.deployments import (
     GetDeploymentInput,
     ListDeploymentsInput,
+    RestartDeploymentInput,
     ScaleDeploymentInput,
     get_deployment,
     list_deployments,
+    restart_deployment,
     scale_deployment,
 )
 
@@ -1498,3 +1500,421 @@ def test_scale_tool_is_marked_is_write_true() -> None:
 
     # Silence "imported but unused" for the local-module ToolResult.
     _ = ToolResult
+
+
+# ===========================================================================
+# restart_deployment
+# ===========================================================================
+
+
+import re  # noqa: E402
+
+_RFC3339_Z_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+
+# ---------------------------------------------------------------------------
+# §6.1 Layer 3 enforcement
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_restart_writes_disabled_returns_layer3_error_before_any_api_call(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    result = await restart_deployment(
+        RestartDeploymentInput(name="api", namespace="dev"),
+        ctx=kube_context,
+        settings=Settings(enable_writes=False),
+    )
+
+    assert result.success is False
+    assert result.error == (
+        "write operations are disabled; restart the server with --enable-writes to enable"
+    )
+    deployments_api.patch_namespaced_deployment.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Namespace handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_restart_rejects_namespace_all(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    result = await restart_deployment(
+        RestartDeploymentInput(name="api", namespace="all"),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is False
+    assert "single namespace" in (result.error or "")
+    deployments_api.patch_namespaced_deployment.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_restart_uses_default_namespace_when_none(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    await restart_deployment(
+        RestartDeploymentInput(name="api"), ctx=kube_context, settings=_WRITES_ON
+    )
+
+    kwargs = deployments_api.patch_namespaced_deployment.call_args.kwargs
+    assert kwargs["namespace"] == "default"
+
+
+@pytest.mark.asyncio
+async def test_restart_specific_namespace_passes_through(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    await restart_deployment(
+        RestartDeploymentInput(name="api", namespace="staging"),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert deployments_api.patch_namespaced_deployment.call_args.kwargs["namespace"] == "staging"
+
+
+@pytest.mark.asyncio
+async def test_restart_namespace_outside_allowlist_rejected(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    result = await restart_deployment(
+        RestartDeploymentInput(name="api", namespace="prod"),
+        ctx=kube_context,
+        settings=Settings(enable_writes=True, namespaces=("dev", "staging")),
+    )
+
+    assert result.success is False
+    assert "prod" in (result.error or "")
+    assert "allowlist" in (result.error or "")
+    deployments_api.patch_namespaced_deployment.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_restart_default_namespace_outside_allowlist_rejected(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    result = await restart_deployment(
+        RestartDeploymentInput(name="api"),
+        ctx=kube_context,
+        settings=Settings(enable_writes=True, namespaces=("dev",)),
+    )
+
+    assert result.success is False
+    assert "default" in (result.error or "")
+    assert "specify a namespace explicitly" in (result.error or "")
+
+
+# ---------------------------------------------------------------------------
+# dry_run semantics
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_restart_dry_run_true_passes_dry_run_all_to_api(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    result = await restart_deployment(
+        RestartDeploymentInput(name="api", namespace="dev", dry_run=True),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is True
+    assert deployments_api.patch_namespaced_deployment.call_args.kwargs["dry_run"] == "All"
+    assert result.data["dry_run"] is True
+    assert result.data["applied"] is False
+
+
+@pytest.mark.asyncio
+async def test_restart_dry_run_false_omits_kwarg_and_marks_applied(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    result = await restart_deployment(
+        RestartDeploymentInput(name="api", namespace="dev", dry_run=False),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is True
+    assert "dry_run" not in deployments_api.patch_namespaced_deployment.call_args.kwargs
+    assert result.data["dry_run"] is False
+    assert result.data["applied"] is True
+
+
+@pytest.mark.asyncio
+async def test_restart_default_dry_run_is_true(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    result = await restart_deployment(
+        RestartDeploymentInput(name="api", namespace="dev"),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.data["dry_run"] is True
+    assert result.data["applied"] is False
+    assert deployments_api.patch_namespaced_deployment.call_args.kwargs["dry_run"] == "All"
+
+
+# ---------------------------------------------------------------------------
+# Patch body & resource selection
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_restart_patch_body_has_correct_deep_nesting(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    """The body MUST match kubectl rollout restart's exact shape, including
+    the canonical annotation key."""
+    await restart_deployment(
+        RestartDeploymentInput(name="api", namespace="staging"),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    body = deployments_api.patch_namespaced_deployment.call_args.kwargs["body"]
+    # Exact deep-nesting check
+    annotation_value = body["spec"]["template"]["metadata"]["annotations"][
+        "kubectl.kubernetes.io/restartedAt"
+    ]
+    assert annotation_value  # non-empty
+    # The body has exactly the keys we expect (no extra noise)
+    assert body == {
+        "spec": {
+            "template": {
+                "metadata": {
+                    "annotations": {
+                        "kubectl.kubernetes.io/restartedAt": annotation_value,
+                    }
+                }
+            }
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_restart_uses_main_deployment_resource_not_scale_subresource(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    """Restart mutates the pod template via the main resource, NOT /scale."""
+    await restart_deployment(
+        RestartDeploymentInput(name="api", namespace="dev"),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    deployments_api.patch_namespaced_deployment.assert_called_once()
+    deployments_api.patch_namespaced_deployment_scale.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_restart_no_read_before_patch(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    """Unlike scale_deployment, restart has no read-before-patch — there's
+    no 'from' state worth capturing."""
+    await restart_deployment(
+        RestartDeploymentInput(name="api", namespace="dev"),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    deployments_api.read_namespaced_deployment.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Timestamp consistency and format
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_restart_timestamp_is_same_value_in_body_audit_and_response(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    """Generated once per call — must be byte-for-byte identical across all
+    three sites so a downstream operator can correlate the audit log line
+    with the actual annotation set on the deployment.
+    """
+    result = await restart_deployment(
+        RestartDeploymentInput(name="api", namespace="staging"),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    body = deployments_api.patch_namespaced_deployment.call_args.kwargs["body"]
+    annotation_value = body["spec"]["template"]["metadata"]["annotations"][
+        "kubectl.kubernetes.io/restartedAt"
+    ]
+    assert result.audit is not None
+    assert result.audit["restarted_at"] == annotation_value
+    assert result.data["restarted_at"] == annotation_value
+
+
+@pytest.mark.asyncio
+async def test_restart_timestamp_is_rfc3339_with_z_suffix(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    """Matches kubectl rollout restart's annotation format byte-for-byte —
+    seconds precision, ``Z`` suffix (no ``+00:00`` form)."""
+    result = await restart_deployment(
+        RestartDeploymentInput(name="api", namespace="dev"),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    timestamp = result.data["restarted_at"]
+    assert _RFC3339_Z_PATTERN.match(timestamp) is not None, (
+        f"Timestamp {timestamp!r} does not match RFC3339-Z (kubectl format)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Audit
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_restart_audit_fields_present_in_log_and_envelope(
+    kube_context: KubeContext,
+    deployments_api: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger="k8s_mcp_server.audit"):
+        result = await restart_deployment(
+            RestartDeploymentInput(name="api", namespace="staging", dry_run=False),
+            ctx=kube_context,
+            settings=_WRITES_ON,
+        )
+
+    assert result.audit is not None
+    assert result.audit["namespace"] == "staging"
+    assert result.audit["name"] == "api"
+    assert result.audit["dry_run"] is False
+    assert _RFC3339_Z_PATTERN.match(result.audit["restarted_at"]) is not None
+
+    [record] = caplog.records
+    assert record.name == "k8s_mcp_server.audit"
+    assert "write_operation tool=restart_deployment" in record.message
+    assert "namespace=staging" in record.message
+    assert "name=api" in record.message
+    assert f"restarted_at={result.audit['restarted_at']}" in record.message
+    assert "dry_run=False" in record.message
+
+
+@pytest.mark.asyncio
+async def test_restart_audit_present_on_failed_patch(
+    kube_context: KubeContext,
+    deployments_api: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No read-before-patch → audit is ALWAYS emitted before the patch
+    attempt and ALWAYS present in the envelope (success or failure).
+    """
+    deployments_api.patch_namespaced_deployment.side_effect = ApiException(
+        status=500, reason="Internal"
+    )
+
+    with caplog.at_level(logging.INFO, logger="k8s_mcp_server.audit"):
+        result = await restart_deployment(
+            RestartDeploymentInput(name="api", namespace="dev"),
+            ctx=kube_context,
+            settings=_WRITES_ON,
+        )
+
+    assert result.success is False
+    assert result.audit is not None
+    assert any("write_operation tool=restart_deployment" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Errors
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_restart_404_returns_friendly_error_with_audit(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    deployments_api.patch_namespaced_deployment.side_effect = ApiException(
+        status=404, reason="Not Found"
+    )
+
+    result = await restart_deployment(
+        RestartDeploymentInput(name="ghost", namespace="staging"),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is False
+    assert result.error == "deployment 'ghost' not found in namespace 'staging'"
+    assert result.audit is not None  # audit happened before the patch
+
+
+@pytest.mark.asyncio
+async def test_restart_non_404_api_error_returns_kubernetes_api_error(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    deployments_api.patch_namespaced_deployment.side_effect = ApiException(
+        status=500, reason="Internal"
+    )
+
+    result = await restart_deployment(
+        RestartDeploymentInput(name="api", namespace="dev"),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is False
+    assert "kubernetes API error" in (result.error or "")
+    assert "Internal" in (result.error or "")
+    assert result.audit is not None
+
+
+@pytest.mark.asyncio
+async def test_restart_unexpected_exception_returns_error_with_audit(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    deployments_api.patch_namespaced_deployment.side_effect = RuntimeError("boom")
+
+    result = await restart_deployment(
+        RestartDeploymentInput(name="api", namespace="dev"),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is False
+    assert "boom" in (result.error or "")
+    assert result.audit is not None
+
+
+# ---------------------------------------------------------------------------
+# Registration & input validation
+# ---------------------------------------------------------------------------
+
+
+def test_restart_tool_is_marked_is_write_true() -> None:
+    """Sanity: the tool MUST be registered with is_write=True so Layer 2 filters it."""
+    from k8s_mcp_server.tools._registry import all_tools
+
+    [restart] = [t for t in all_tools() if t.name == "restart_deployment"]
+    assert restart.is_write is True
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},  # missing name
+        {"name": ""},  # empty name
+        {"name": "api", "extra": "nope"},  # extra field
+    ],
+)
+def test_restart_input_validation_rejects_bad_payloads(payload: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        RestartDeploymentInput.model_validate(payload)

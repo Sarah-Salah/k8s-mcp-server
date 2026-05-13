@@ -288,7 +288,9 @@ If the server was started with `--namespaces ns1,ns2`:
 - `namespace: str | None`
 - `dry_run: bool = True`
 
-**Output:** `{name, namespace, restart_triggered_at, dry_run, applied}`
+**Output:** `{name, namespace, restarted_at, dry_run, applied}`
+
+`restarted_at` is an RFC3339 UTC timestamp (e.g. `"2026-05-13T10:30:00Z"`) generated once per call. The same value flows to: the patched `spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]` (the canonical kubectl annotation key — chosen so external tools that parse rollout history find our restarts too), the audit log line, and the response.
 
 ---
 

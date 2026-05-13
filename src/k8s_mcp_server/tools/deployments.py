@@ -1,9 +1,10 @@
-"""Deployment tools: ``list_deployments``, ``get_deployment``, ``scale_deployment``."""
+"""Deployment tools: list/get/scale/restart_deployment."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from kubernetes.client import AppsV1Api
@@ -487,3 +488,141 @@ def _current_replicas(deployment: Any) -> int | None:
     """
     spec = getattr(deployment, "spec", None)
     return getattr(spec, "replicas", None) if spec else None
+
+
+# ===========================================================================
+# restart_deployment (write tool — see CLAUDE.md §6.1)
+# ===========================================================================
+
+
+class RestartDeploymentInput(BaseModel):
+    """Inputs for ``restart_deployment``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1)
+    namespace: str | None = None
+    dry_run: bool = True
+
+
+@register_tool(
+    name="restart_deployment",
+    description=(
+        "Trigger a rolling restart of a deployment (equivalent to "
+        "'kubectl rollout restart deployment/<name>'). Patches the pod "
+        "template with a 'kubectl.kubernetes.io/restartedAt' annotation, "
+        "which changes the template hash and causes the deployment "
+        "controller to spin up a new ReplicaSet. dry_run=True (default) "
+        "validates the patch without applying. namespace='all' is rejected."
+    ),
+    input_model=RestartDeploymentInput,
+    is_write=True,
+)
+async def restart_deployment(
+    inp: RestartDeploymentInput,
+    *,
+    ctx: KubeContext,
+    settings: Settings,
+) -> ToolResult:
+    """Trigger a rolling restart by stamping the pod template annotation.
+
+    See CLAUDE.md §6.1 for the Write Tool Contract this implements. Unlike
+    ``scale_deployment``, no read-before-patch — restart has no "from" state
+    worth capturing, so audit is always emitted before the single patch.
+    """
+    if (denied := assert_writes_enabled(settings)) is not None:
+        return denied  # Layer 3
+
+    if inp.namespace == "all":
+        return ToolResult(
+            success=False,
+            error=(
+                "namespace='all' is not supported for restart_deployment; "
+                "specify a single namespace"
+            ),
+        )
+
+    try:
+        targets = resolve_read_namespaces(inp.namespace, settings=settings, ctx=ctx)
+    except NamespaceNotAllowedError as exc:
+        return ToolResult(success=False, error=str(exc))
+
+    assert targets is not None and len(targets) == 1
+    namespace = targets[0]
+
+    # Generate ONCE — same string flows to body, audit, and response.
+    # RFC3339 with "Z" suffix matches kubectl rollout restart byte-for-byte,
+    # so external tools (Argo CD, Flux, observability dashboards) that parse
+    # the annotation find our restarts too.
+    restarted_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    audit: dict[str, Any] = {
+        "namespace": namespace,
+        "name": inp.name,
+        "restarted_at": restarted_at,
+        "dry_run": inp.dry_run,
+    }
+    log_write_operation("restart_deployment", **audit)
+
+    api = AppsV1Api(ctx.api_client)
+    patch_kwargs: dict[str, Any] = {}
+    if inp.dry_run:
+        patch_kwargs["dry_run"] = "All"
+    try:
+        await asyncio.to_thread(
+            api.patch_namespaced_deployment,
+            name=inp.name,
+            namespace=namespace,
+            body=_restart_patch_body(restarted_at),
+            **patch_kwargs,
+        )
+    except ApiException as exc:
+        if exc.status == 404:
+            return ToolResult(
+                success=False,
+                error=f"deployment '{inp.name}' not found in namespace '{namespace}'",
+                audit=audit,
+            )
+        return ToolResult(
+            success=False,
+            error=f"kubernetes API error: {exc.reason or exc.status}",
+            audit=audit,
+        )
+    except Exception as exc:
+        logger.exception("restart_deployment patch failed")
+        return ToolResult(success=False, error=f"unexpected error: {exc}", audit=audit)
+
+    return ToolResult(
+        success=True,
+        data={
+            "namespace": namespace,
+            "name": inp.name,
+            "restarted_at": restarted_at,
+            "dry_run": inp.dry_run,
+            "applied": not inp.dry_run,
+        },
+        audit=audit,
+    )
+
+
+def _restart_patch_body(restarted_at: str) -> dict[str, Any]:
+    """Build the deep-nested JSON-merge patch body that kubectl rollout restart uses.
+
+    Patching ``spec.template.metadata.annotations`` mutates the pod template,
+    which changes the template hash and triggers the deployment controller to
+    spin up a new ReplicaSet — exactly what ``kubectl rollout restart`` does.
+    The annotation key ``kubectl.kubernetes.io/restartedAt`` is kubectl's
+    canonical key; using the same key means external tools that look for
+    restart history find ours too.
+    """
+    return {
+        "spec": {
+            "template": {
+                "metadata": {
+                    "annotations": {
+                        "kubectl.kubernetes.io/restartedAt": restarted_at,
+                    }
+                }
+            }
+        }
+    }
