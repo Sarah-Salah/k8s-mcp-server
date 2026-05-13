@@ -1,6 +1,6 @@
 [project]
 name = "k8s-mcp-server"
-version = "0.1.0"
+version = "0.1.0rc1"
 description = "An MCP server exposing Kubernetes cluster operations to AI assistants."
 readme = "README.md"
 license = { text = "MIT" }
