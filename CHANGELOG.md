@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Extracted shared `event_sort_key` helper to `utils/k8s_events.py`;
+  `tools/pods.py` and `tools/events.py` now import from there. No behavior
+  change. (Resolves the temporary duplication introduced when `list_events`
+  landed.)
+
 ### Added
 
 - `tools/events.py`: `list_events` tool. Inputs: `namespace`,
@@ -35,14 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   fallback, missing `involved_object`, API errors, and input validation
   (extra field / invalid `type` literal / case-sensitive `type` /
   out-of-range `since_seconds` and `limit`).
-
-### Known duplication
-
-- `_event_sort_key` is duplicated between `tools/pods.py` and `tools/events.py`.
-  The next commit (`refactor: extract _event_sort_key to utils/k8s_events.py`)
-  consolidates both call sites onto a shared helper. Duplication kept brief
-  and clearly commented in both modules so the feature commit and the
-  refactor commit each stay single-purpose.
 
 - `tools/logs.py`: `get_pod_logs` tool. Inputs: `name` (required), `namespace`,
   `container`, `tail_lines` (default 200, 1–10000), `since_seconds`,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
 from typing import Any
 
 from kubernetes.client import CoreV1Api
@@ -16,6 +15,7 @@ from k8s_mcp_server.kube.client import KubeContext
 from k8s_mcp_server.kube.safe import NamespaceNotAllowedError, resolve_read_namespaces
 from k8s_mcp_server.tools._registry import ToolResult, register_tool
 from k8s_mcp_server.utils.formatting import age_human, age_seconds_since
+from k8s_mcp_server.utils.k8s_events import event_sort_key
 
 logger = logging.getLogger(__name__)
 
@@ -217,22 +217,8 @@ async def _fetch_pod_events(
         logger.exception("get_pod: unexpected error fetching events for %s/%s", namespace, pod_name)
         return []
 
-    events = sorted(result.items, key=_event_sort_key, reverse=True)
+    events = sorted(result.items, key=event_sort_key, reverse=True)
     return [_format_event(e) for e in events[:_POD_EVENT_LIMIT]]
-
-
-def _event_sort_key(event: Any) -> Any:
-    """Most-recent timestamp for ordering events; falls back to epoch UTC."""
-    for attr in ("last_timestamp", "event_time"):
-        value = getattr(event, attr, None)
-        if value is not None:
-            return value
-    metadata = getattr(event, "metadata", None)
-    if metadata is not None:
-        ct = getattr(metadata, "creation_timestamp", None)
-        if ct is not None:
-            return ct
-    return datetime(1970, 1, 1, tzinfo=UTC)
 
 
 def _format_pod_detail(pod: Any, events: list[dict[str, Any]]) -> dict[str, Any]:

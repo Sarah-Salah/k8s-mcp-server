@@ -16,6 +16,7 @@ from k8s_mcp_server.kube.client import KubeContext
 from k8s_mcp_server.kube.safe import NamespaceNotAllowedError, resolve_read_namespaces
 from k8s_mcp_server.tools._registry import ToolResult, register_tool
 from k8s_mcp_server.utils.formatting import age_seconds_since
+from k8s_mcp_server.utils.k8s_events import event_sort_key
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ async def list_events(
     if inp.since_seconds is not None:
         raw = [e for e in raw if _within_since(e, threshold_seconds=inp.since_seconds)]
 
-    raw.sort(key=_event_sort_key, reverse=True)
+    raw.sort(key=event_sort_key, reverse=True)
     truncated = len(raw) > inp.limit
     events = [_format_event(e) for e in raw[: inp.limit]]
     return ToolResult(success=True, data={"events": events, "truncated": truncated})
@@ -130,30 +131,11 @@ def _within_since(event: Any, *, threshold_seconds: int) -> bool:
     """Keep events whose most-recent timestamp is within ``threshold_seconds`` of now.
 
     Events with no usable timestamps fall back to epoch UTC (see
-    ``_event_sort_key``) and are therefore filtered out.
+    :func:`event_sort_key`) and are therefore filtered out.
     """
-    last = _event_sort_key(event)
+    last = event_sort_key(event)
     age = (datetime.now(UTC) - last).total_seconds()
-    return bool(age <= threshold_seconds)
-
-
-# DUPLICATION: this function is also defined in src/k8s_mcp_server/tools/pods.py.
-# Both copies will be replaced by a shared helper at
-# src/k8s_mcp_server/utils/k8s_events.py in the next commit (refactor:
-# extract _event_sort_key). Maintaining two copies briefly so this commit
-# stays single-purpose.
-def _event_sort_key(event: Any) -> Any:
-    """Most-recent timestamp for ordering events; falls back to epoch UTC."""
-    for attr in ("last_timestamp", "event_time"):
-        value = getattr(event, attr, None)
-        if value is not None:
-            return value
-    metadata = getattr(event, "metadata", None)
-    if metadata is not None:
-        ct = getattr(metadata, "creation_timestamp", None)
-        if ct is not None:
-            return ct
-    return datetime(1970, 1, 1, tzinfo=UTC)
+    return age <= threshold_seconds
 
 
 def _format_event(event: Any) -> dict[str, Any]:
