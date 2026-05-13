@@ -1,4 +1,4 @@
-"""``list_nodes`` tool: list cluster nodes with health and capacity."""
+"""Node tools: ``list_nodes`` and ``get_node``."""
 
 from __future__ import annotations
 
@@ -14,10 +14,12 @@ from k8s_mcp_server.config import Settings
 from k8s_mcp_server.kube.client import KubeContext
 from k8s_mcp_server.tools._registry import ToolResult, register_tool
 from k8s_mcp_server.utils.formatting import age_human, age_seconds_since
+from k8s_mcp_server.utils.k8s_conditions import format_condition
 
 logger = logging.getLogger(__name__)
 
 _NODE_ROLE_LABEL_PREFIX = "node-role.kubernetes.io/"
+_NODE_POD_COUNT_LIMIT = 1000  # kubelet default max pods/node is 110; 1000 is safety margin
 
 
 class ListNodesInput(BaseModel):
@@ -134,3 +136,111 @@ def _ready_status(conditions: list[Any]) -> str:
                 return "NotReady"
             return "Unknown"
     return "Unknown"
+
+
+class GetNodeInput(BaseModel):
+    """Inputs for ``get_node``.
+
+    No ``namespace`` field — nodes are cluster-scoped resources.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1)
+
+
+@register_tool(
+    name="get_node",
+    description=(
+        "Full node detail including conditions (with last_transition_age_seconds), "
+        "taints, capacity/allocatable Quantity strings, and a pods-on-node count. "
+        "Nodes are cluster-scoped — no namespace input."
+    ),
+    input_model=GetNodeInput,
+)
+async def get_node(
+    inp: GetNodeInput,
+    *,
+    ctx: KubeContext,
+    settings: Settings,
+) -> ToolResult:
+    """Full node details including conditions and recent events."""
+    del settings  # nodes are cluster-scoped; no allowlist applies
+
+    api = CoreV1Api(ctx.api_client)
+    try:
+        node = await asyncio.to_thread(api.read_node, name=inp.name)
+    except ApiException as exc:
+        if exc.status == 404:
+            return ToolResult(success=False, error=f"node '{inp.name}' not found")
+        return ToolResult(
+            success=False,
+            error=f"kubernetes API error: {exc.reason or exc.status}",
+        )
+    except Exception as exc:
+        logger.exception("get_node failed")
+        return ToolResult(success=False, error=f"unexpected error: {exc}")
+
+    pods_on_node = await _fetch_pod_count_on_node(api, node_name=inp.name)
+    return ToolResult(success=True, data=_format_node_detail(node, pods_on_node))
+
+
+async def _fetch_pod_count_on_node(api: CoreV1Api, *, node_name: str) -> int | None:
+    """Count pods scheduled to ``node_name`` via the ``spec.nodeName`` field selector.
+
+    Returns ``None`` (with a logged warning) on RBAC/API failure so the rest
+    of the node detail still surfaces — same partial-success pattern as
+    ``get_pod``'s event fetch and ``get_deployment``'s ReplicaSet fetch.
+    """
+    try:
+        res = await asyncio.to_thread(
+            api.list_pod_for_all_namespaces,
+            field_selector=f"spec.nodeName={node_name}",
+            limit=_NODE_POD_COUNT_LIMIT,
+        )
+    except ApiException:
+        logger.warning("get_node: failed to fetch pod count for %s", node_name)
+        return None
+    except Exception:
+        logger.exception("get_node: unexpected error fetching pod count for %s", node_name)
+        return None
+    return len(res.items)
+
+
+def _format_node_detail(n: Any, pods_on_node: int | None) -> dict[str, Any]:
+    """Compose the full ``get_node`` response from a V1Node and pre-counted pods."""
+    metadata = getattr(n, "metadata", None)
+    spec = getattr(n, "spec", None)
+    status = getattr(n, "status", None)
+
+    creation = getattr(metadata, "creation_timestamp", None) if metadata else None
+    secs = age_seconds_since(creation)
+
+    labels = (getattr(metadata, "labels", None) or {}) if metadata else {}
+    conditions = (getattr(status, "conditions", None) or []) if status else []
+    node_info = getattr(status, "node_info", None) if status else None
+    capacity = (getattr(status, "capacity", None) or {}) if status else {}
+    allocatable = (getattr(status, "allocatable", None) or {}) if status else {}
+    taints = (getattr(spec, "taints", None) or []) if spec else []
+
+    return {
+        "name": (getattr(metadata, "name", None) if metadata else None) or "Unknown",
+        "status": _ready_status(conditions),
+        "roles": _roles_from_labels(labels),
+        "age_seconds": secs,
+        "age_human": age_human(secs),
+        "kubelet_version": (getattr(node_info, "kubelet_version", None) if node_info else None),
+        "capacity": dict(capacity),
+        "allocatable": dict(allocatable),
+        "conditions": [format_condition(c) for c in conditions],
+        "taints": [_format_taint(t) for t in taints],
+        "pods_on_node": pods_on_node,
+    }
+
+
+def _format_taint(t: Any) -> dict[str, Any]:
+    return {
+        "key": getattr(t, "key", None),
+        "value": getattr(t, "value", None),
+        "effect": getattr(t, "effect", None),
+    }

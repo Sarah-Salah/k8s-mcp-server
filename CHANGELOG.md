@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `tools/nodes.py`: `get_node` tool. Returns full node detail — name,
+  derived status, roles (reusing `list_nodes`' logic), age, kubelet
+  version, raw capacity/allocatable Quantity strings, full conditions
+  list (via the shared `format_condition`), taints (`{key, value,
+  effect}` — `time_added` dropped), and a `pods_on_node` count.
+- `get_node` 404 → `"node 'X' not found"` (no namespace, since nodes are
+  cluster-scoped).
+- `get_node` pod count: separate `list_pod_for_all_namespaces` call with
+  `field_selector="spec.nodeName=<name>"` and a `limit=1000` safety cap
+  (kubelet default max pods/node is 110; production rarely exceeds 250).
+  Failure (RBAC, API error) returns `pods_on_node: null` with a logged
+  warning — same partial-success pattern as `get_pod`'s event fetch and
+  `get_deployment`'s ReplicaSet fetch.
+- `get_node` rejects a `namespace` input field (`ValidationError`), making
+  the cluster-scoping explicit at the schema level.
+- 15 tests for `get_node` covering happy path with full state, 404 / 500 /
+  unexpected error, pod-count field selector + limit, partial-success on
+  pod-count failure (ApiException + unexpected), conditions detail via
+  shared helper, taints formatting (with-value / no-value / None →
+  empty list), reuse of `_ready_status` and `_roles_from_labels` from
+  `list_nodes`, defensive missing metadata/spec/status, namespace-field
+  rejection, and input validation.
+
 - `tools/nodes.py`: `list_nodes` tool. Inputs: `label_selector`, `limit`
   (default 100, 1–1000). No `namespace` input — nodes are cluster-scoped
   and the `--namespaces` allowlist does not apply (passing a `namespace`
