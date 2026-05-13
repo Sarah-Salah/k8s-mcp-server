@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `kube/safe.py`: `assert_writes_enabled(settings) -> ToolResult | None`
+  — Layer 3 in-handler re-check of the `--enable-writes` flag. Returns a
+  `ToolResult(success=False, error="write operations are disabled; restart
+  the server with --enable-writes to enable")` when the flag is off, else
+  `None`. Every write tool will call this as the first line of its handler
+  body (see CLAUDE.md §6.1).
+- `utils/audit.py`: `log_write_operation(tool_name, **fields)` — structured
+  audit logger at INFO level on the logger `k8s_mcp_server.audit` (a
+  stable name that is part of the public contract for operators). Format:
+  `write_operation tool=<name> k1=v1 k2=v2 ...`. Applies field-name-based
+  redaction (per `docs/SECURITY.md` regex: `token|secret|password|api[_-]?key|bearer`)
+  before emit. Field-name-based, not entropy-based, by design — see the
+  module docstring for the rationale.
+- `tests/test_security.py`: cross-cutting tests for the write-tool
+  infrastructure. Uses a dummy write tool registered via a snapshot+restore
+  autouse fixture so the 13 real read tools don't interfere. Tests pin:
+  Layer 2 filter (write tools excluded/included based on flag, read tools
+  always visible, `visible == all - write_tools` set identity), Layer 3
+  `assert_writes_enabled` (friendly error phrase pinned exactly, None on
+  pass-through, full ToolResult envelope shape), and the audit logger
+  (INFO level, stable `write_operation` prefix, keyval format, no-kwargs
+  edge case, logger-name stability, password redaction, parametrized
+  redaction across all SECURITY.md patterns incl. case-insensitive and
+  `api[_-]?key` variants, non-redaction of unrelated fields like UUIDs).
+- CLAUDE.md §6.1 "Write Tool Contract": documents the three layers of
+  defense (flag / registry filter / in-handler `assert_writes_enabled`),
+  the audit logger public-contract rule, the dry_run pattern, and the
+  handler boilerplate every write tool must follow.
+
 - `tools/metrics.py`: `top_nodes` tool. Inputs: `sort_by`
   (`Literal["cpu", "memory"]`, default `"cpu"`), `limit` (default 20,
   1–100 — smaller cap than `top_pods` since clusters rarely exceed 100

@@ -134,6 +134,81 @@ k8s-mcp-server/
 - **All write tools default to `dry_run=True`.**
 - **Audit log every write** to stderr.
 
+### 6.1 Write Tool Contract
+
+Every tool registered with `is_write=True` MUST follow this contract. The
+contract is enforced across **three layers of defense**, aligned with
+`docs/SECURITY.md`:
+
+| Layer | Where | Mechanism |
+| --- | --- | --- |
+| 1 | CLI / server start | `--enable-writes` flag must be set (`Settings.enable_writes`) |
+| 2 | `server.build_server` | `_visible_tools()` filters out `is_write=True` tools when the flag is False — they aren't even listed to the LLM |
+| 3 | First line of every write tool handler | `if (denied := assert_writes_enabled(settings)) is not None: return denied` — catches a hypothetical Layer 2 bypass |
+
+**The audit logger name `k8s_mcp_server.audit` is part of the public contract.**
+Operators configure log aggregation on this name. Do not rename without a
+major version bump.
+
+**Handler boilerplate:**
+
+```python
+from k8s_mcp_server.kube.safe import assert_writes_enabled, resolve_read_namespaces
+from k8s_mcp_server.tools._registry import ToolResult, register_tool
+from k8s_mcp_server.utils.audit import log_write_operation
+
+@register_tool(name="scale_deployment", ..., is_write=True)
+async def scale_deployment(inp, *, ctx, settings):
+    if (denied := assert_writes_enabled(settings)) is not None:
+        return denied                              # Layer 3 re-check
+
+    if inp.namespace == "all":
+        return ToolResult(
+            success=False,
+            error="namespace='all' is not supported for scale_deployment; "
+                  "specify a single namespace",
+        )
+
+    # Same allowlist semantics as read tools (the "all" guard above already
+    # handled the disallowed "all" case).
+    try:
+        targets = resolve_read_namespaces(inp.namespace, settings=settings, ctx=ctx)
+    except NamespaceNotAllowedError as exc:
+        return ToolResult(success=False, error=str(exc))
+    namespace = targets[0]
+
+    # Layer 4: dry_run="All" maps to K8s's native dry-run mode.
+    api_kwargs = {"dry_run": "All"} if inp.dry_run else {}
+
+    # ... perform the K8s call(s) ...
+
+    # Layer 5: audit log + envelope. Called regardless of dry_run so every
+    # attempt is recorded.
+    audit_fields = {
+        "namespace": namespace, "name": inp.name, "dry_run": inp.dry_run,
+        "replicas_from": old, "replicas_to": new,
+    }
+    log_write_operation("scale_deployment", **audit_fields)
+    return ToolResult(success=True, data=..., audit=audit_fields)
+```
+
+**Mandatory write-tool input fields:**
+
+- `dry_run: bool = True` — default True. The LLM must opt in to apply by
+  passing `dry_run=False`.
+
+**Mandatory write-tool behaviours:**
+
+- Call `assert_writes_enabled(settings)` as the **first line** of the
+  handler body and return its result if non-None.
+- Reject `namespace="all"` upfront with a clear error (write tools operate
+  on single resources).
+- Call `log_write_operation(tool_name, **fields)` after deciding to attempt
+  the operation — regardless of `dry_run`. Fields include `namespace`,
+  `name`, `dry_run`, and any tool-specific deltas.
+- Populate `ToolResult.audit` with the same fields surfaced in the log so
+  the MCP response carries the audit record.
+
 ---
 
 ## 7. Testing Requirements

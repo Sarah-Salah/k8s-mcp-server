@@ -1,15 +1,39 @@
-"""Safety helpers: namespace allowlist resolution (write-tool gates land here later)."""
+"""Safety helpers: namespace allowlist resolution and write-tool gates."""
 
 from __future__ import annotations
 
 from k8s_mcp_server.config import Settings
 from k8s_mcp_server.kube.client import KubeContext
+from k8s_mcp_server.tools._registry import ToolResult
 
-__all__ = ["NamespaceNotAllowedError", "resolve_read_namespaces"]
+__all__ = [
+    "NamespaceNotAllowedError",
+    "assert_writes_enabled",
+    "resolve_read_namespaces",
+]
 
 
 class NamespaceNotAllowedError(ValueError):
     """Requested namespace is not in the ``--namespaces`` allowlist."""
+
+
+def assert_writes_enabled(settings: Settings) -> ToolResult | None:
+    """Layer 3 defense: in-handler re-check of the writes-enabled flag.
+
+    Returns a ``ToolResult`` for the handler to short-circuit on when writes
+    are disabled, or ``None`` to indicate "proceed". Per docs/SECURITY.md,
+    this is the layer that catches a hypothetical bypass of Layer 2 (the
+    registry filter in ``server.build_server``). Every write tool MUST call
+    this as the first line of its handler body — see CLAUDE.md §6.1.
+    """
+    if not settings.enable_writes:
+        return ToolResult(
+            success=False,
+            error=(
+                "write operations are disabled; restart the server with --enable-writes to enable"
+            ),
+        )
+    return None
 
 
 def resolve_read_namespaces(
