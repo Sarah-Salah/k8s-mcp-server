@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `tools/services.py`: `list_services` tool. Inputs: `namespace`,
+  `label_selector`, `limit` (default 100, 1–1000). Output per service:
+  `{name, namespace, type, cluster_ip, external_ip, ports, age_seconds,
+  age_human}`. `external_ip` is resolved from
+  `status.load_balancer.ingress[0]` — `.ip` first, falling back to
+  `.hostname` (AWS ELBs surface hostname; GCP surfaces ip); `None` for
+  ClusterIP/NodePort/ExternalName and unprovisioned LoadBalancers.
+- `list_services` port shape: `{name, port, target_port, protocol}` per
+  entry, with `node_port` *only included when non-None* (NodePort and
+  LoadBalancer services). `protocol` defaults to `"TCP"` when the K8s
+  field is missing. `target_port` is passed through as-is (int or named
+  port string).
+- `list_services` namespace dispatch follows the established pattern:
+  `list_namespaced_service` per namespace, or
+  `list_service_for_all_namespaces` once when `namespace="all"` without
+  an allowlist. Output sorted by `(namespace, name)`. Per-namespace
+  `limit` + aggregate truncation flag.
+- 22 tests for `list_services` covering namespace dispatch, label
+  selector forwarding, truncation, sort order, the full `external_ip`
+  resolution matrix (ClusterIP / LoadBalancer with ip / LoadBalancer
+  with hostname / LoadBalancer with no ingress / LoadBalancer with
+  empty-fields ingress entry), port formatting (protocol default,
+  node_port omission, named target_port, multi-port preservation, empty
+  list), defensive missing metadata/spec/status, API exceptions, and
+  input validation.
+
 - `tools/deployments.py`: `get_deployment` tool. Returns full deployment
   state — name, namespace, age, strategy (RollingUpdate / Recreate),
   `selector.match_labels`, all five replica counts

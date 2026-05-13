@@ -19,6 +19,7 @@ from k8s_mcp_server.tools import events as _events  # noqa: F401 — registers t
 from k8s_mcp_server.tools import logs as _logs  # noqa: F401 — registers tool
 from k8s_mcp_server.tools import namespaces as _namespaces  # noqa: F401 — registers tool
 from k8s_mcp_server.tools import pods as _pods  # noqa: F401 — registers tool
+from k8s_mcp_server.tools import services as _services  # noqa: F401 — registers tool
 from k8s_mcp_server.tools._registry import RegisteredTool, ToolResult, all_tools
 
 logger = logging.getLogger(__name__)
