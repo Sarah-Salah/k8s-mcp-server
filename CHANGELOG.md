@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `tools/metrics.py`: `top_nodes` tool. Inputs: `sort_by`
+  (`Literal["cpu", "memory"]`, default `"cpu"`), `limit` (default 20,
+  1–100 — smaller cap than `top_pods` since clusters rarely exceed 100
+  nodes outside hyperscale). No `namespace` input — nodes are
+  cluster-scoped; passing one is a `ValidationError`. Output per node:
+  `{name, cpu_millicores, memory_mib, cpu_percent, memory_percent}`.
+- `top_nodes` queries `metrics.k8s.io/v1beta1` via
+  `CustomObjectsApi.list_cluster_custom_object(plural="nodes", ...)`.
+  Reuses the existing `_cpu_to_millicores` / `_memory_to_mib` parsers
+  and the metrics-server-missing 404 handler (`"metrics-server not
+  available"` — pinned by
+  `test_top_nodes_metrics_server_not_available_returns_friendly_error`).
+- `top_nodes` percent calculation: a single batch
+  `CoreV1Api.list_node()` call builds a `{name: {cpu_millicores,
+  mem_mib}}` allocatable map. Percentages are `round()`-ed to int (matches
+  `kubectl top nodes` display). **One extra API call total, not N** — the
+  cost stays constant on 200-node clusters.
+- `top_nodes` partial-success on capacity fetch failure: an `ApiException`
+  or unexpected exception from `list_node` returns `cpu_percent: null` /
+  `memory_percent: null` for every node (with a logged warning); usage
+  values still surface. Per-field nullability: if a single node's
+  allocatable is missing or has `allocatable.cpu="0"`, that node's
+  percent fields are independently null while the other fields populate.
+- **Overcommit (usage > allocatable) yields `percent > 100` and is
+  surfaced as-is, NOT clamped at 100.** Commented in code: clamping
+  would hide a real production signal (pods exceeding requests/limits,
+  eviction risk) from the LLM.
+- `top_nodes` sort: by `cpu_millicores` or `memory_mib` descending; ties
+  broken by `name` ascending. Truncation: aggregate then cap at `limit`.
+- 22 tests for `top_nodes` covering happy path with percent calc, int
+  rounding, **overcommit-not-clamped**, partial-success matrix (alloc.cpu=0,
+  alloc.memory unparseable, node missing from map, list_node fails with
+  ApiException, list_node fails with unexpected exception, allocatable
+  with status=None, V1Node with no metadata.name), metrics-server-missing
+  friendly error, sort by cpu (default) and memory, name tiebreaker,
+  truncation (over + under), empty items, items=None, defensive missing
+  metadata/usage, non-404 API error (distinct from metrics-server-missing),
+  unexpected exception, and input validation (namespace-field rejection +
+  extra/sort_by/limit bounds).
+
 - `tools/metrics.py`: `top_pods` tool. Inputs: `namespace`, `sort_by`
   (`Literal["cpu", "memory"]`, default `"cpu"`), `limit` (default 20, 1–200).
   Output per pod: `{name, namespace, cpu_millicores, memory_mib, containers:
