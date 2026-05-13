@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `tools/pods.py`: `get_pod` tool. Returns full pod state — name, namespace,
+  phase, node, pod_ip, age, containers, init containers, conditions, and the
+  10 most recent events (sorted by `last_timestamp`). Conditions include
+  `last_transition_age_seconds` so the LLM can reason about how long a
+  condition has been in its state. Container `state` is a nested dict
+  `{phase, reason, message}` covering running / waiting / terminated.
+- `get_pod` namespace handling: rejects `namespace="all"` upfront with a clear
+  message; otherwise defers to `resolve_read_namespaces` (so the allowlist
+  applies the same way as `list_pods`).
+- `get_pod` events: separate `list_namespaced_event` call with
+  `field_selector="involvedObject.kind=Pod,involvedObject.name=<name>"`.
+  UID-based filtering is intentionally NOT used because it would drop
+  kubelet-emitted events whose `involvedObject.uid` is null.
+- `get_pod` 404 handling: returns `success=False` with
+  `"pod 'X' not found in namespace 'Y'"` rather than the generic
+  "kubernetes API error: Not Found".
+- `get_pod` event-fetch failure handling: pod data is still returned with
+  `events: []` and a logged warning, so the tool remains useful when the
+  events endpoint is RBAC-restricted but pod read works.
+- 16 tests for `get_pod` covering default/specific namespace, allowlist
+  rejection, "all" rejection, 404 / 500 / unexpected exception, event field
+  selector, sort + cap at 10, partial-success on event-fetch failure,
+  container state shapes (running / waiting / terminated), init containers,
+  defensive partial pod, event sort by `event_time` fallback, and input
+  validation.
+
 - `kube/safe.py`: `resolve_read_namespaces` resolver and `NamespaceNotAllowedError`
   exception. Centralises the `--namespaces` allowlist semantics defined in
   `docs/TOOLS_SPEC.md`: `None` → context default (rejected if not allowlisted,
