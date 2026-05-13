@@ -1,4 +1,4 @@
-"""Deployment tools: ``list_deployments`` and ``get_deployment``."""
+"""Deployment tools: ``list_deployments``, ``get_deployment``, ``scale_deployment``."""
 
 from __future__ import annotations
 
@@ -12,8 +12,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from k8s_mcp_server.config import Settings
 from k8s_mcp_server.kube.client import KubeContext
-from k8s_mcp_server.kube.safe import NamespaceNotAllowedError, resolve_read_namespaces
+from k8s_mcp_server.kube.safe import (
+    NamespaceNotAllowedError,
+    assert_writes_enabled,
+    resolve_read_namespaces,
+)
 from k8s_mcp_server.tools._registry import ToolResult, register_tool
+from k8s_mcp_server.utils.audit import log_write_operation
 from k8s_mcp_server.utils.formatting import age_human, age_seconds_since
 from k8s_mcp_server.utils.k8s_conditions import format_condition
 
@@ -335,3 +340,150 @@ def _format_replicaset(rs: Any) -> dict[str, Any]:
 
 def _container_summary(c: Any) -> dict[str, Any]:
     return {"name": getattr(c, "name", None), "image": getattr(c, "image", None)}
+
+
+# ===========================================================================
+# scale_deployment (write tool — see CLAUDE.md §6.1)
+# ===========================================================================
+
+
+class ScaleDeploymentInput(BaseModel):
+    """Inputs for ``scale_deployment``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1)
+    namespace: str | None = None
+    replicas: int = Field(..., ge=0, le=1000)
+    dry_run: bool = True
+
+
+@register_tool(
+    name="scale_deployment",
+    description=(
+        "Set the replica count of a deployment via the /scale sub-resource. "
+        "dry_run=True (default) validates the patch with the K8s API "
+        "(server-side dry-run) without applying. namespace='all' is rejected "
+        "— specify a single namespace. Returns an audit dict capturing "
+        "replicas_from / replicas_to / dry_run."
+    ),
+    input_model=ScaleDeploymentInput,
+    is_write=True,
+)
+async def scale_deployment(
+    inp: ScaleDeploymentInput,
+    *,
+    ctx: KubeContext,
+    settings: Settings,
+) -> ToolResult:
+    """Set the replica count of a deployment.
+
+    See CLAUDE.md §6.1 for the Write Tool Contract this implements.
+    """
+    if (denied := assert_writes_enabled(settings)) is not None:
+        return denied  # Layer 3
+
+    if inp.namespace == "all":
+        return ToolResult(
+            success=False,
+            error=(
+                "namespace='all' is not supported for scale_deployment; specify a single namespace"
+            ),
+        )
+
+    try:
+        targets = resolve_read_namespaces(inp.namespace, settings=settings, ctx=ctx)
+    except NamespaceNotAllowedError as exc:
+        return ToolResult(success=False, error=str(exc))
+
+    # After the "all" guard above, the resolver always returns a single-element list.
+    assert targets is not None and len(targets) == 1
+    namespace = targets[0]
+
+    api = AppsV1Api(ctx.api_client)
+
+    # 1. Read current replicas for the audit envelope.
+    try:
+        current = await asyncio.to_thread(
+            api.read_namespaced_deployment, name=inp.name, namespace=namespace
+        )
+    except ApiException as exc:
+        if exc.status == 404:
+            return ToolResult(
+                success=False,
+                error=f"deployment '{inp.name}' not found in namespace '{namespace}'",
+            )
+        return ToolResult(
+            success=False,
+            error=f"kubernetes API error: {exc.reason or exc.status}",
+        )
+    except Exception as exc:
+        logger.exception("scale_deployment read failed")
+        return ToolResult(success=False, error=f"unexpected error: {exc}")
+
+    replicas_from = _current_replicas(current)
+    audit: dict[str, Any] = {
+        "namespace": namespace,
+        "name": inp.name,
+        "replicas_from": replicas_from,
+        "replicas_to": inp.replicas,
+        "dry_run": inp.dry_run,
+    }
+
+    # 2. Audit BEFORE attempting the patch — failed patches still get audited.
+    log_write_operation("scale_deployment", **audit)
+
+    # 3. Patch the /scale sub-resource. dry_run="All" → server-side validate-only.
+    patch_kwargs: dict[str, Any] = {}
+    if inp.dry_run:
+        patch_kwargs["dry_run"] = "All"
+    try:
+        await asyncio.to_thread(
+            api.patch_namespaced_deployment_scale,
+            name=inp.name,
+            namespace=namespace,
+            body={"spec": {"replicas": inp.replicas}},
+            **patch_kwargs,
+        )
+    except ApiException as exc:
+        if exc.status == 404:
+            # Race: deployment deleted between read and patch. Same friendly
+            # error as 404-on-read so the LLM sees diagnostic equivalence.
+            return ToolResult(
+                success=False,
+                error=f"deployment '{inp.name}' not found in namespace '{namespace}'",
+                audit=audit,
+            )
+        return ToolResult(
+            success=False,
+            error=f"kubernetes API error: {exc.reason or exc.status}",
+            audit=audit,
+        )
+    except Exception as exc:
+        logger.exception("scale_deployment patch failed")
+        return ToolResult(success=False, error=f"unexpected error: {exc}", audit=audit)
+
+    return ToolResult(
+        success=True,
+        data={
+            "namespace": namespace,
+            "name": inp.name,
+            "replicas_from": replicas_from,
+            "replicas_to": inp.replicas,
+            "dry_run": inp.dry_run,
+            "applied": not inp.dry_run,
+        },
+        audit=audit,
+    )
+
+
+def _current_replicas(deployment: Any) -> int | None:
+    """Extract ``spec.replicas`` from a V1Deployment, passing ``None`` through.
+
+    K8s defaults missing replicas to 1 at create time, so this should rarely
+    be None in practice. We pass through rather than translate (consistent
+    with ``list_deployments``); the audit log will surface ``None`` honestly
+    in the rare malformed case.
+    """
+    spec = getattr(deployment, "spec", None)
+    return getattr(spec, "replicas", None) if spec else None

@@ -260,7 +260,7 @@ If the server was started with `--namespaces ns1,ns2`:
 **Input:**
 - `name: str`
 - `namespace: str | None`
-- `replicas: int` — must be `>= 0` and `<= 100`
+- `replicas: int` — must be `>= 0` and `<= 1000`
 - `dry_run: bool = True`
 
 **Output:**
@@ -268,12 +268,14 @@ If the server was started with `--namespaces ns1,ns2`:
 {
   "name": "...",
   "namespace": "...",
-  "previous_replicas": 3,
-  "new_replicas": 5,
+  "replicas_from": 3,
+  "replicas_to": 5,
   "dry_run": true,
   "applied": false
 }
 ```
+
+`replicas_from` is read from the deployment's current `spec.replicas` and passes through as `null` if unset (rare/malformed). `replicas_from`/`replicas_to` are also the audit field names emitted to `k8s_mcp_server.audit`.
 
 ---
 

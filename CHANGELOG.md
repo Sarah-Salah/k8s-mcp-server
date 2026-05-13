@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `tools/deployments.py`: `scale_deployment` write tool (registered with
+  `is_write=True`). Inputs: `name`, `namespace`, `replicas` (`0–1000`),
+  `dry_run` (default `True`). Follows the Write Tool Contract from
+  CLAUDE.md §6.1 exactly:
+  - **Layer 3**: `assert_writes_enabled(settings)` as the first line —
+    no K8s call happens when `--enable-writes` is off, pinned by
+    `test_scale_writes_disabled_returns_layer3_error_before_any_api_call`.
+  - **Rejects `namespace="all"`** upfront.
+  - **Reads the current deployment** for the audit envelope, then patches
+    the `/scale` sub-resource (`patch_namespaced_deployment_scale`) with
+    a JSON-merge body `{"spec": {"replicas": N}}`. The `/scale`
+    sub-resource is canonical for replica updates and respects narrow
+    RBAC (a user with only `update deployments/scale` can scale without
+    full `update deployments`).
+  - **Layer 4**: `dry_run="All"` is forwarded to the K8s API when the
+    input `dry_run=True` (server-side validate-only). `dry_run=False`
+    omits the kwarg entirely and marks `applied=True` in the response.
+  - **Layer 5**: `log_write_operation("scale_deployment", ...)` emits
+    BEFORE the patch attempt — failed patches still get audited.
+  - **404 race condition** between read and patch returns the same
+    friendly `"deployment 'X' not found in namespace 'Y'"` as 404-on-read.
+  - **Audit asymmetry**: `ToolResult.audit` is populated on success AND
+    on failed-PATCH paths (operation was attempted); NOT on failed-READ
+    paths (operation wasn't attempted).
+  - **`replicas_from=None` pass-through** when the source deployment has
+    no `spec.replicas` set (rare/malformed) — consistent with
+    `list_deployments`, no translation of K8s's None=1 convention.
+- `docs/TOOLS_SPEC.md` tool #14 updated to match: field names
+  `replicas_from`/`replicas_to` (was `previous_replicas`/`new_replicas`),
+  `replicas` upper bound `1000` (was `100`). The spec stays the single
+  source of truth and aligns with the audit-log keyval style.
+- 24 tests for `scale_deployment` in `test_deployments.py` covering the
+  full Write Tool Contract: Layer 3 enforcement (no K8s call when writes
+  disabled), namespace handling (all/specific/default/allowlist), dry_run
+  semantics (`"All"` kwarg presence/absence and `applied` flag), default
+  `dry_run=True`, `/scale` sub-resource patch body, `replicas_from`
+  capture from current deployment (including None pass-through), audit
+  envelope + log line presence, audit asymmetry (failed-read=no audit /
+  failed-patch=audit), 404-on-read and 404-on-patch race, non-404 read
+  and patch errors, unexpected exceptions on both calls, boundary values
+  (0 and 1000 accepted), input validation (negative, > 1000, missing
+  required fields, extra fields), and a sanity check that the tool
+  registers with `is_write=True` so Layer 2 filters it.
+
 - `kube/safe.py`: `assert_writes_enabled(settings) -> ToolResult | None`
   — Layer 3 in-handler re-check of the `--enable-writes` flag. Returns a
   `ToolResult(success=False, error="write operations are disabled; restart

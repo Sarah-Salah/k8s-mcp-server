@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -14,11 +15,14 @@ from pydantic import ValidationError
 
 from k8s_mcp_server.config import Settings
 from k8s_mcp_server.kube.client import KubeContext
+from k8s_mcp_server.tools._registry import ToolResult
 from k8s_mcp_server.tools.deployments import (
     GetDeploymentInput,
     ListDeploymentsInput,
+    ScaleDeploymentInput,
     get_deployment,
     list_deployments,
+    scale_deployment,
 )
 
 PATCH_TARGET = "k8s_mcp_server.tools.deployments"
@@ -982,3 +986,515 @@ async def test_get_deployment_with_no_uid_filters_out_all_replicasets(
 
     assert result.success is True
     assert result.data["rollout_history"] == []
+
+
+# ===========================================================================
+# scale_deployment
+# ===========================================================================
+
+
+_WRITES_ON = Settings(enable_writes=True)
+
+
+def _deployment_with_replicas(replicas: int | None = 3) -> SimpleNamespace:
+    """Minimal V1Deployment-shaped object that read_namespaced_deployment returns."""
+    return SimpleNamespace(spec=SimpleNamespace(replicas=replicas))
+
+
+# ---------------------------------------------------------------------------
+# §6.1 Layer 3 enforcement
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scale_writes_disabled_returns_layer3_error_before_any_api_call(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    """Layer 3: with enable_writes=False, NO K8s call should happen."""
+    result = await scale_deployment(
+        ScaleDeploymentInput(name="api", namespace="dev", replicas=5),
+        ctx=kube_context,
+        settings=Settings(enable_writes=False),
+    )
+
+    assert result.success is False
+    assert result.error == (
+        "write operations are disabled; restart the server with --enable-writes to enable"
+    )
+    deployments_api.read_namespaced_deployment.assert_not_called()
+    deployments_api.patch_namespaced_deployment_scale.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Namespace handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scale_rejects_namespace_all(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    result = await scale_deployment(
+        ScaleDeploymentInput(name="api", namespace="all", replicas=5),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is False
+    assert "single namespace" in (result.error or "")
+    deployments_api.read_namespaced_deployment.assert_not_called()
+    deployments_api.patch_namespaced_deployment_scale.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scale_uses_default_namespace_when_none(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    deployments_api.read_namespaced_deployment.return_value = _deployment_with_replicas(3)
+
+    await scale_deployment(
+        ScaleDeploymentInput(name="api", replicas=5),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert deployments_api.read_namespaced_deployment.call_args.kwargs["namespace"] == "default"
+    assert (
+        deployments_api.patch_namespaced_deployment_scale.call_args.kwargs["namespace"] == "default"
+    )
+
+
+@pytest.mark.asyncio
+async def test_scale_namespace_outside_allowlist_rejected(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    result = await scale_deployment(
+        ScaleDeploymentInput(name="api", namespace="prod", replicas=5),
+        ctx=kube_context,
+        settings=Settings(enable_writes=True, namespaces=("dev", "staging")),
+    )
+
+    assert result.success is False
+    assert "prod" in (result.error or "")
+    assert "allowlist" in (result.error or "")
+    deployments_api.read_namespaced_deployment.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scale_default_namespace_outside_allowlist_rejected(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    result = await scale_deployment(
+        ScaleDeploymentInput(name="api", replicas=5),
+        ctx=kube_context,
+        settings=Settings(enable_writes=True, namespaces=("dev",)),
+    )
+
+    assert result.success is False
+    assert "default" in (result.error or "")
+    assert "specify a namespace explicitly" in (result.error or "")
+
+
+# ---------------------------------------------------------------------------
+# dry_run semantics
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scale_dry_run_true_passes_dry_run_all_to_api(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    deployments_api.read_namespaced_deployment.return_value = _deployment_with_replicas(3)
+
+    result = await scale_deployment(
+        ScaleDeploymentInput(name="api", namespace="dev", replicas=5, dry_run=True),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is True
+    kwargs = deployments_api.patch_namespaced_deployment_scale.call_args.kwargs
+    assert kwargs["dry_run"] == "All"
+    assert result.data["dry_run"] is True
+    assert result.data["applied"] is False
+
+
+@pytest.mark.asyncio
+async def test_scale_dry_run_false_omits_dry_run_kwarg_and_marks_applied(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    deployments_api.read_namespaced_deployment.return_value = _deployment_with_replicas(3)
+
+    result = await scale_deployment(
+        ScaleDeploymentInput(name="api", namespace="dev", replicas=5, dry_run=False),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is True
+    kwargs = deployments_api.patch_namespaced_deployment_scale.call_args.kwargs
+    assert "dry_run" not in kwargs
+    assert result.data["dry_run"] is False
+    assert result.data["applied"] is True
+
+
+@pytest.mark.asyncio
+async def test_scale_default_dry_run_is_true(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    """Layer 4: omitting dry_run defaults to True — not applied."""
+    deployments_api.read_namespaced_deployment.return_value = _deployment_with_replicas(3)
+
+    result = await scale_deployment(
+        ScaleDeploymentInput(name="api", namespace="dev", replicas=5),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is True
+    assert result.data["dry_run"] is True
+    assert result.data["applied"] is False
+    assert deployments_api.patch_namespaced_deployment_scale.call_args.kwargs["dry_run"] == "All"
+
+
+# ---------------------------------------------------------------------------
+# Patch body and replicas_from capture
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scale_replicas_from_captured_from_current_deployment(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    deployments_api.read_namespaced_deployment.return_value = _deployment_with_replicas(7)
+
+    result = await scale_deployment(
+        ScaleDeploymentInput(name="api", namespace="dev", replicas=10),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.data["replicas_from"] == 7
+    assert result.data["replicas_to"] == 10
+
+
+@pytest.mark.asyncio
+async def test_scale_replicas_from_passes_none_through_when_unset(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    """spec.replicas=None (malformed/unusual) passes through, not translated to 1."""
+    deployments_api.read_namespaced_deployment.return_value = _deployment_with_replicas(None)
+
+    result = await scale_deployment(
+        ScaleDeploymentInput(name="api", namespace="dev", replicas=3),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.data["replicas_from"] is None
+    assert result.data["replicas_to"] == 3
+
+
+@pytest.mark.asyncio
+async def test_scale_patches_scale_subresource_with_correct_body(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    """Uses /scale (not /deployment) and sends the JSON-merge body."""
+    deployments_api.read_namespaced_deployment.return_value = _deployment_with_replicas(3)
+
+    await scale_deployment(
+        ScaleDeploymentInput(name="api", namespace="staging", replicas=8),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    deployments_api.patch_namespaced_deployment_scale.assert_called_once()
+    kwargs = deployments_api.patch_namespaced_deployment_scale.call_args.kwargs
+    assert kwargs["name"] == "api"
+    assert kwargs["namespace"] == "staging"
+    assert kwargs["body"] == {"spec": {"replicas": 8}}
+    # patch_namespaced_deployment (the wrong sub-resource) is NEVER called
+    deployments_api.patch_namespaced_deployment.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Audit (log + ToolResult.audit)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scale_audit_fields_present_in_log_and_envelope(
+    kube_context: KubeContext,
+    deployments_api: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    deployments_api.read_namespaced_deployment.return_value = _deployment_with_replicas(3)
+
+    with caplog.at_level(logging.INFO, logger="k8s_mcp_server.audit"):
+        result = await scale_deployment(
+            ScaleDeploymentInput(name="api", namespace="staging", replicas=5, dry_run=False),
+            ctx=kube_context,
+            settings=_WRITES_ON,
+        )
+
+    expected_audit = {
+        "namespace": "staging",
+        "name": "api",
+        "replicas_from": 3,
+        "replicas_to": 5,
+        "dry_run": False,
+    }
+    assert result.audit == expected_audit
+
+    [record] = caplog.records
+    assert record.name == "k8s_mcp_server.audit"
+    assert "write_operation tool=scale_deployment" in record.message
+    assert "namespace=staging" in record.message
+    assert "name=api" in record.message
+    assert "replicas_from=3" in record.message
+    assert "replicas_to=5" in record.message
+    assert "dry_run=False" in record.message
+
+
+@pytest.mark.asyncio
+async def test_scale_audit_present_on_failed_patch_path(
+    kube_context: KubeContext,
+    deployments_api: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Failed PATCH still gets audited — that's the whole point of pre-attempt logging."""
+    deployments_api.read_namespaced_deployment.return_value = _deployment_with_replicas(3)
+    deployments_api.patch_namespaced_deployment_scale.side_effect = ApiException(
+        status=500, reason="Internal"
+    )
+
+    with caplog.at_level(logging.INFO, logger="k8s_mcp_server.audit"):
+        result = await scale_deployment(
+            ScaleDeploymentInput(name="api", namespace="dev", replicas=5),
+            ctx=kube_context,
+            settings=_WRITES_ON,
+        )
+
+    assert result.success is False
+    assert result.audit is not None
+    assert result.audit["replicas_from"] == 3
+    assert result.audit["replicas_to"] == 5
+    # Audit log line still emitted (failed patch is still an attempt)
+    assert any("write_operation tool=scale_deployment" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_scale_no_audit_on_failed_read_path(
+    kube_context: KubeContext,
+    deployments_api: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Failed READ means the operation wasn't attempted; no audit log, no audit envelope."""
+    deployments_api.read_namespaced_deployment.side_effect = ApiException(
+        status=404, reason="Not Found"
+    )
+
+    with caplog.at_level(logging.INFO, logger="k8s_mcp_server.audit"):
+        result = await scale_deployment(
+            ScaleDeploymentInput(name="ghost", namespace="dev", replicas=5),
+            ctx=kube_context,
+            settings=_WRITES_ON,
+        )
+
+    assert result.success is False
+    assert result.audit is None
+    assert not any("write_operation" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# 404 errors
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scale_404_on_read_returns_friendly_error(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    deployments_api.read_namespaced_deployment.side_effect = ApiException(
+        status=404, reason="Not Found"
+    )
+
+    result = await scale_deployment(
+        ScaleDeploymentInput(name="ghost", namespace="staging", replicas=5),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is False
+    assert result.error == "deployment 'ghost' not found in namespace 'staging'"
+    deployments_api.patch_namespaced_deployment_scale.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scale_404_on_patch_race_returns_same_friendly_error(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    """Deployment deleted between read and patch: same diagnostic equivalence."""
+    deployments_api.read_namespaced_deployment.return_value = _deployment_with_replicas(3)
+    deployments_api.patch_namespaced_deployment_scale.side_effect = ApiException(
+        status=404, reason="Not Found"
+    )
+
+    result = await scale_deployment(
+        ScaleDeploymentInput(name="api", namespace="staging", replicas=5),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is False
+    assert result.error == "deployment 'api' not found in namespace 'staging'"
+    # Race-loss audit is still recorded — we attempted
+    assert result.audit is not None
+
+
+# ---------------------------------------------------------------------------
+# Other API errors
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scale_non_404_read_error_returns_kubernetes_api_error(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    deployments_api.read_namespaced_deployment.side_effect = ApiException(
+        status=500, reason="Internal"
+    )
+
+    result = await scale_deployment(
+        ScaleDeploymentInput(name="api", namespace="dev", replicas=5),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is False
+    assert "kubernetes API error" in (result.error or "")
+    assert "Internal" in (result.error or "")
+    assert result.audit is None
+
+
+@pytest.mark.asyncio
+async def test_scale_non_404_patch_error_returns_kubernetes_api_error_with_audit(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    deployments_api.read_namespaced_deployment.return_value = _deployment_with_replicas(3)
+    deployments_api.patch_namespaced_deployment_scale.side_effect = ApiException(
+        status=500, reason="Internal"
+    )
+
+    result = await scale_deployment(
+        ScaleDeploymentInput(name="api", namespace="dev", replicas=5),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is False
+    assert "kubernetes API error" in (result.error or "")
+    assert result.audit is not None
+
+
+@pytest.mark.asyncio
+async def test_scale_unexpected_exception_on_read(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    deployments_api.read_namespaced_deployment.side_effect = RuntimeError("read boom")
+
+    result = await scale_deployment(
+        ScaleDeploymentInput(name="api", namespace="dev", replicas=5),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is False
+    assert "read boom" in (result.error or "")
+    assert result.audit is None
+
+
+@pytest.mark.asyncio
+async def test_scale_unexpected_exception_on_patch(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    deployments_api.read_namespaced_deployment.return_value = _deployment_with_replicas(3)
+    deployments_api.patch_namespaced_deployment_scale.side_effect = RuntimeError("patch boom")
+
+    result = await scale_deployment(
+        ScaleDeploymentInput(name="api", namespace="dev", replicas=5),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is False
+    assert "patch boom" in (result.error or "")
+    assert result.audit is not None
+
+
+# ---------------------------------------------------------------------------
+# Boundary values / input validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scale_replicas_zero_accepted(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    """Scale-down-to-zero is a valid operation (stop the deployment)."""
+    deployments_api.read_namespaced_deployment.return_value = _deployment_with_replicas(5)
+
+    result = await scale_deployment(
+        ScaleDeploymentInput(name="api", namespace="dev", replicas=0),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is True
+    assert result.data["replicas_to"] == 0
+    assert deployments_api.patch_namespaced_deployment_scale.call_args.kwargs["body"] == {
+        "spec": {"replicas": 0}
+    }
+
+
+@pytest.mark.asyncio
+async def test_scale_replicas_max_1000_accepted(
+    kube_context: KubeContext, deployments_api: MagicMock
+) -> None:
+    deployments_api.read_namespaced_deployment.return_value = _deployment_with_replicas(3)
+
+    result = await scale_deployment(
+        ScaleDeploymentInput(name="api", namespace="dev", replicas=1000),
+        ctx=kube_context,
+        settings=_WRITES_ON,
+    )
+
+    assert result.success is True
+    assert result.data["replicas_to"] == 1000
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"name": "api", "replicas": -1},
+        {"name": "api", "replicas": 1001},
+        {"name": "api"},
+        {"replicas": 5},
+        {"name": "", "replicas": 5},
+        {"name": "api", "replicas": 5, "extra": "x"},
+    ],
+)
+def test_scale_input_validation_rejects_bad_payloads(payload: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        ScaleDeploymentInput.model_validate(payload)
+
+
+def test_scale_tool_is_marked_is_write_true() -> None:
+    """Sanity: the tool MUST be registered with is_write=True so Layer 2 filters it."""
+    from k8s_mcp_server.tools._registry import all_tools
+
+    [scale] = [t for t in all_tools() if t.name == "scale_deployment"]
+    assert scale.is_write is True
+
+    # Silence "imported but unused" for the local-module ToolResult.
+    _ = ToolResult
