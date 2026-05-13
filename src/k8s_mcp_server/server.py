@@ -18,6 +18,7 @@ from k8s_mcp_server.tools import deployments as _deployments  # noqa: F401 — r
 from k8s_mcp_server.tools import describe as _describe  # noqa: F401 — registers tool
 from k8s_mcp_server.tools import events as _events  # noqa: F401 — registers tool
 from k8s_mcp_server.tools import logs as _logs  # noqa: F401 — registers tool
+from k8s_mcp_server.tools import metrics as _metrics  # noqa: F401 — registers tool
 from k8s_mcp_server.tools import namespaces as _namespaces  # noqa: F401 — registers tool
 from k8s_mcp_server.tools import nodes as _nodes  # noqa: F401 — registers tool
 from k8s_mcp_server.tools import pods as _pods  # noqa: F401 — registers tool

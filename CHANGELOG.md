@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `tools/metrics.py`: `top_pods` tool. Inputs: `namespace`, `sort_by`
+  (`Literal["cpu", "memory"]`, default `"cpu"`), `limit` (default 20, 1–200).
+  Output per pod: `{name, namespace, cpu_millicores, memory_mib, containers:
+  [{name, cpu_millicores, memory_mib}]}`. Pod-level numbers are sums of
+  container numbers; per-container breakdown is preserved.
+- `top_pods` queries the `metrics.k8s.io/v1beta1` API via
+  `CustomObjectsApi.list_namespaced_custom_object` (or
+  `list_cluster_custom_object` when `namespace="all"` and no allowlist).
+  Honours the `--namespaces` allowlist (resolver-based; iterates per
+  namespace when an allowlist is set).
+- `top_pods` metrics-server detection: a `404` from the metrics API means
+  the API itself isn't registered (a successful list on a cluster with no
+  pods returns 200 + empty items). Returns the exact friendly error
+  `"metrics-server not available"` — pinned by
+  `test_metrics_server_not_available_returns_friendly_error`.
+- `top_pods` Quantity parsing: CPU and memory strings are normalised via
+  `kubernetes.utils.parse_quantity`. CPU values are converted to integer
+  millicores (`int(Decimal cores * 1000)`); memory values to integer MiB
+  (`int(Decimal bytes / 1048576)`). Sub-millicore CPU and sub-MiB memory
+  truncate to 0 — intentional, matches `kubectl top pods` display
+  semantics. Missing/unparseable Quantity strings → 0 so a malformed
+  container doesn't error the whole pod.
+- `top_pods` sort: by `cpu_millicores` or `memory_mib` descending; ties
+  broken by `name` ascending.
+- `top_pods` truncation: per-namespace aggregate then cap at `limit` with
+  `truncated` flag — same pattern as `list_pods` / `list_events`.
+- `patch_custom_objects` factory fixture in `tests/conftest.py`, parallel
+  to the three existing `patch_*` factories. Used by `test_metrics.py`
+  and any future tools that hit custom resources.
+- ~26 tests for `top_pods` covering namespace dispatch (specific / None /
+  all-no-allowlist / all-with-allowlist / outside-allowlist /
+  default-not-in-allowlist), the **metrics-server-missing friendly error
+  on both namespaced and cluster-wide paths**, CPU Quantity parsing
+  (parametrized over nanocores / microcores / millicores / cores / 1m),
+  memory Quantity parsing (parametrized over Gi / Mi / Ki / sub-MiB),
+  defensive missing cpu / memory / usage / metadata / containers /
+  empty items / None items, unparseable Quantity → 0, multi-container
+  pod-level sum, sort by cpu (default) and memory, name tiebreaker,
+  truncation (over + under), non-404 API error (distinct from
+  metrics-server-missing), unexpected exception, and input validation
+  (extra field, invalid sort_by Literal, invalid limit bounds).
+
 - `tools/describe.py`: `describe_resource` tool. Polymorphic structured
   describe view across seven kinds (`pod`, `deployment`, `service`,
   `node`, `configmap`, `secret`, `ingress`). Output schema is consistent:

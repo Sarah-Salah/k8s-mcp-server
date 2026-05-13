@@ -92,3 +92,24 @@ def patch_networking_v1(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], Magi
         return api
 
     return _patch
+
+
+@pytest.fixture
+def patch_custom_objects(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], MagicMock]:
+    """Factory: patch ``CustomObjectsApi`` inside an arbitrary tool module.
+
+    Mirrors the other ``patch_*`` factories for tools that query custom
+    resources via ``CustomObjectsApi`` (currently only the ``metrics.k8s.io``
+    endpoints used by ``top_pods`` / ``top_nodes``).
+
+    Usage:
+        api = patch_custom_objects("k8s_mcp_server.tools.metrics")
+        api.list_namespaced_custom_object.return_value = {"items": [...]}
+    """
+
+    def _patch(target_module: str) -> MagicMock:
+        api = MagicMock()
+        monkeypatch.setattr(f"{target_module}.CustomObjectsApi", lambda _client: api)
+        return api
+
+    return _patch
