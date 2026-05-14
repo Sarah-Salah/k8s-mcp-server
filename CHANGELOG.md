@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Minor pre-release polish: trimmed `claude` from `pyproject.toml`
+  keywords (kept `anthropic` / `ai` / `llm` for discoverability),
+  reworded one bold `**Important:**` callout in `docs/TOOLS_SPEC.md` to
+  flowing prose, and reworded the README demo-GIF TODO comment.
+
 ### Fixed
 
 - `tests/integration/test_kind_smoke.py`: removed non-existent `metadata`

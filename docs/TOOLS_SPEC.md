@@ -219,7 +219,7 @@ If the server was started with `--namespaces ns1,ns2`:
 }
 ```
 
-**Important:** When `kind="secret"`, `status` and `spec_summary` MUST omit `.data` and `.stringData`. Only `type`, `data_keys` (key names), and standard metadata are returned.
+When `kind="secret"`, `status` and `spec_summary` MUST omit `.data` and `.stringData` — only `type`, `data_keys` (key names), and standard metadata are returned. This is a security guarantee, pinned by tests.
 
 ---
 

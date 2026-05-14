@@ -16,7 +16,7 @@ Built with 528 unit tests against mocked K8s APIs plus a kind-cluster integratio
 
 ## Demo
 
-<!-- TODO: demo GIF, added in Step 4 -->
+<!-- TODO: add demo GIF before v0.1.0 launch -->
 
 *Demo coming: a 30-second loop of Claude Desktop diagnosing a crashing pod — the model calls `list_pods`, spots `CrashLoopBackOff`, fetches `get_pod_logs` with `previous=True`, reads the stack trace, and suggests the fix.*
 

@@ -6,7 +6,7 @@ readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Sarah Salah", email = "sarah.salah.rizk@gmail.com" }]
 requires-python = ">=3.13"
-keywords = ["mcp", "kubernetes", "k8s", "claude", "anthropic", "ai", "llm", "devops"]
+keywords = ["mcp", "kubernetes", "k8s", "anthropic", "ai", "llm", "devops"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
