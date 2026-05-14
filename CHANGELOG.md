@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Renamed PyPI package from `k8s-mcp-server` to `kubernetes-mcp` to
+  align with MCP ecosystem naming convention. The original name was
+  already registered on PyPI by another account; the more idiomatic
+  `mcp-server-kubernetes` was also taken. The console script command
+  (`k8s-mcp-server`) and Python import path (`k8s_mcp_server`) are both
+  preserved — only the package install name changes. Users now run
+  `pip install kubernetes-mcp` then invoke `k8s-mcp-server` as before.
 - Minor pre-release polish: trimmed `claude` from `pyproject.toml`
   keywords (kept `anthropic` / `ai` / `llm` for discoverability),
   reworded one bold `**Important:**` callout in `docs/TOOLS_SPEC.md` to

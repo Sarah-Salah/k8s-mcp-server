@@ -72,13 +72,13 @@ The server applies five layers of protection. A write tool only executes if **ev
 For day-to-day debugging:
 
 ```bash
-uvx k8s-mcp-server
+uvx --from kubernetes-mcp k8s-mcp-server
 ```
 
 For occasional, scoped operational work:
 
 ```bash
-uvx k8s-mcp-server --enable-writes --namespaces dev,staging
+uvx --from kubernetes-mcp k8s-mcp-server --enable-writes --namespaces dev,staging
 ```
 
 For incident response in production: configure a separate, audited workflow. This tool is **not** intended as a primary production-write surface in v1.

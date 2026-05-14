@@ -1,5 +1,5 @@
 [project]
-name = "k8s-mcp-server"
+name = "kubernetes-mcp"
 version = "0.1.0"
 description = "An MCP server exposing Kubernetes cluster operations to AI assistants."
 readme = "README.md"

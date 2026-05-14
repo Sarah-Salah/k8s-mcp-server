@@ -100,7 +100,7 @@ twine upload --repository testpypi dist/*
 
 ### B.3 — Verify on TestPyPI
 
-- [ ] Visit <https://test.pypi.org/project/k8s-mcp-server/>. Verify:
+- [ ] Visit <https://test.pypi.org/project/kubernetes-mcp/>. Verify:
   - README renders correctly (badges, headings, two feature tables)
   - All 4 sidebar URLs work (Homepage, Repository, Issues, **Changelog**)
   - All 8 keywords appear
@@ -114,7 +114,7 @@ twine upload --repository testpypi dist/*
   /tmp/k8s-mcp-testpypi/bin/pip install \
       --index-url https://test.pypi.org/simple/ \
       --extra-index-url https://pypi.org/simple/ \
-      k8s-mcp-server
+      kubernetes-mcp
   /tmp/k8s-mcp-testpypi/bin/k8s-mcp-server --version
   /tmp/k8s-mcp-testpypi/bin/k8s-mcp-server --help
   rm -rf /tmp/k8s-mcp-testpypi
@@ -133,7 +133,7 @@ twine upload --repository testpypi dist/*
       packages
 - [ ] Generate an API token: account settings → "API tokens" → "Add API
       token". Scope to "Entire account" for the first publish; switch to
-      "Project: k8s-mcp-server" once the project exists.
+      "Project: kubernetes-mcp" once the project exists.
 - [ ] Save the token to an env var:
       ```bash
       export UV_PUBLISH_TOKEN="pypi-..."
@@ -153,20 +153,20 @@ twine upload dist/*
 
 ### C.3 — Verify on PyPI
 
-- [ ] Visit <https://pypi.org/project/k8s-mcp-server/>. Same verifications
+- [ ] Visit <https://pypi.org/project/kubernetes-mcp/>. Same verifications
       as B.3 (README, URLs, keywords, classifiers).
 - [ ] Smoke install in a fresh venv (no `--extra-index-url` needed —
       everything is on real PyPI):
   ```bash
   python3.13 -m venv /tmp/k8s-mcp-pypi
-  /tmp/k8s-mcp-pypi/bin/pip install k8s-mcp-server
+  /tmp/k8s-mcp-pypi/bin/pip install kubernetes-mcp
   /tmp/k8s-mcp-pypi/bin/k8s-mcp-server --version
   /tmp/k8s-mcp-pypi/bin/k8s-mcp-server --help
   rm -rf /tmp/k8s-mcp-pypi
   ```
 - [ ] Test the `uvx` no-install path:
   ```bash
-  uvx k8s-mcp-server --version
+  uvx --from kubernetes-mcp k8s-mcp-server --version
   ```
 
 ---
@@ -222,7 +222,7 @@ Or via the web UI:
 - [ ] The README's CI badge auto-updates as new commits run; verify it
       reflects the latest run after the tag push triggers a CI build
 - [ ] Check the PyPI download stats start incrementing
-      (<https://pepy.tech/project/k8s-mcp-server>)
+      (<https://pepy.tech/project/kubernetes-mcp>)
 - [ ] Bookmark the project page for future reference
 
 ---

@@ -6,7 +6,7 @@ An MCP server that lets AI assistants — Claude Desktop, Cursor, Claude Code �
 ![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 ![MCP](https://img.shields.io/badge/MCP-compatible-purple.svg)
-![PyPI](https://img.shields.io/pypi/v/k8s-mcp-server.svg)
+![PyPI](https://img.shields.io/pypi/v/kubernetes-mcp.svg)
 
 ## What it does
 
@@ -55,13 +55,13 @@ Every write tool defaults to `dry_run=True`. Full input/output specs in [`docs/T
 **Option A — try without installing (recommended for first run):**
 
 ```bash
-uvx k8s-mcp-server --help
+uvx --from kubernetes-mcp k8s-mcp-server --help
 ```
 
 **Option B — install for daily use:**
 
 ```bash
-pip install k8s-mcp-server
+pip install kubernetes-mcp
 ```
 
 You'll need a working `~/.kube/config` pointing at the cluster you want to inspect.

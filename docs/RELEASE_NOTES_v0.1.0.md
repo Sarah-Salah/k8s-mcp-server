@@ -36,13 +36,13 @@ AND writes. Secret values are never returned. Full threat model in
 ## Installation
 
 ```bash
-pip install k8s-mcp-server
+pip install kubernetes-mcp
 ```
 
 Or run without installing:
 
 ```bash
-uvx k8s-mcp-server --help
+uvx --from kubernetes-mcp k8s-mcp-server --help
 ```
 
 ## Quick start

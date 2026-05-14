@@ -7,7 +7,7 @@ A production-quality MCP server giving AI assistants safe, observable access to 
 - 10+ read tools (list / get / describe / logs / events / metrics) against any cluster reachable via `kubectl`
 - 3 write tools (scale, rollout restart, delete pod) gated behind `--enable-writes` and dry-run by default
 - stdio transport, works out of the box with Claude Desktop, Cursor, and Claude Code
-- Distributed via PyPI (`pip install k8s-mcp-server`) and `uvx`
+- Distributed via PyPI (`pip install kubernetes-mcp`) and `uvx`
 - >85% test coverage on tool implementations
 - CI on GitHub Actions
 
