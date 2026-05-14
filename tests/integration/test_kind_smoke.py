@@ -70,5 +70,5 @@ async def test_kind_cluster_smoke() -> None:
     assert detail.data["name"] == first_pod_name
     assert detail.data["namespace"] == "kube-system"
     # Shape pins — these keys must be present even on a fresh cluster.
-    for key in ("containers", "init_containers", "conditions", "events", "metadata"):
+    for key in ("containers", "init_containers", "conditions", "events"):
         assert key in detail.data, f"missing {key!r} in get_pod response"

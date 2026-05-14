@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `tests/integration/test_kind_smoke.py`: removed non-existent `metadata`
+  key from the `get_pod` shape-assertion tuple. The `get_pod` tool
+  flattens metadata fields (`name`, `namespace`, `age_*`) into the
+  top level of the response — there is no nested `metadata` dict. This
+  was a test-only bug caught on the first CI integration run; production
+  code is unchanged.
+
 ### Changed
 
 - `pyproject.toml`: prepared for v0.1.0 PyPI publish — added `Changelog`
