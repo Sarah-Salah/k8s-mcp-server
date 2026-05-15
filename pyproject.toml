@@ -1,10 +1,10 @@
 [project]
 name = "kubernetes-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "An MCP server exposing Kubernetes cluster operations to AI assistants."
 readme = "README.md"
 license = { text = "MIT" }
-authors = [{ name = "Sarah Salah", email = "sarah.salah.rizk@gmail.com" }]
+authors = [{ name = "Sarah Salah", email = "sarah.salah.work@gmail.com" }]
 requires-python = ">=3.13"
 keywords = ["mcp", "kubernetes", "k8s", "anthropic", "ai", "llm", "devops"]
 classifiers = [
